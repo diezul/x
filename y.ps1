@@ -1,70 +1,52 @@
-# Configurare URL pentru imagine
-$imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
-$tempImagePath = "$env:TEMP\cdr.png"
+# URL-ul imaginii de afișat
+$imageURL = "https://is.gd/specificatii-laptop.jpg"
+$tempImagePath = "$env:TEMP\imagine.jpg"
 
-# Descărcare imagine
-function Download-Image {
-    try {
-        Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
-    } catch {
-        Write-Host "Eroare la descărcarea imaginii. Verificați conexiunea la internet." -ForegroundColor Red
-        exit
-    }
-}
-
-# Afișare imagine pe tot ecranul
-function Show-FullScreenImage {
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-
-    $form = New-Object System.Windows.Forms.Form
-    $form.WindowState = 'Maximized'
-    $form.FormBorderStyle = 'None'
-    $form.TopMost = $true
-    $form.KeyPreview = $true
-
-    try {
-        $img = [System.Drawing.Image]::FromFile($tempImagePath)
-    } catch {
-        Write-Host "Eroare la încărcarea imaginii. Verificați descărcarea." -ForegroundColor Red
-        exit
-    }
-
-    $pictureBox = New-Object System.Windows.Forms.PictureBox
-    $pictureBox.Image = $img
-    $pictureBox.Dock = 'Fill'
-    $pictureBox.SizeMode = 'StretchImage'
-    $form.Controls.Add($pictureBox)
-
-    $global:keySequence = ""
-    $form.KeyDown += {
-        param($sender, $eventArgs)
-        $global:keySequence += $eventArgs.KeyChar
-        if ($global:keySequence -like "*cdr") {
-            Stop-All
-        }
-    }
-
-    $form.Add_Shown({ $form.Activate() })
-    $form.ShowDialog()
-}
-
-# Oprește complet scriptul și elimină persistenta
-function Stop-All {
-    Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat" -Force -ErrorAction SilentlyContinue
-    Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Stop-Process -Force
+# Descărcarea imaginii
+try {
+    Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
+} catch {
+    Write-Host "Eroare la descărcarea imaginii. Verificați conexiunea la internet." -ForegroundColor Red
     exit
 }
 
-# Persistență prin folderul Startup
-function Set-Startup {
-    $scriptPath = $MyInvocation.MyCommand.Path
-    $batFilePath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat"
-    $batContent = "@echo off`nstart /min powershell.exe -ExecutionPolicy Bypass -File `"$scriptPath`""
-    Set-Content -Path $batFilePath -Value $batContent -Force
-}
+# Afișarea imaginii pe ecran complet
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
-# Executare funcționalități
-Download-Image
-Set-Startup
-Show-FullScreenImage
+$form = New-Object System.Windows.Forms.Form
+$form.WindowState = 'Maximized'
+$form.FormBorderStyle = 'None'
+$form.TopMost = $true
+$form.BackColor = [System.Drawing.Color]::Black
+$form.WindowState = [System.Windows.Forms.FormWindowState]::Maximized
+$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
+$form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+$form.KeyPreview = $true
+
+$pictureBox = New-Object System.Windows.Forms.PictureBox
+$pictureBox.Image = [System.Drawing.Image]::FromFile($tempImagePath)
+$pictureBox.Dock = 'Fill'
+$pictureBox.SizeMode = 'StretchImage'
+$form.Controls.Add($pictureBox)
+
+# Dezactivarea combinațiilor de taste Alt+Tab, Ctrl+Alt+Delete, etc.
+$null = [System.Runtime.InteropServices.Marshal]::Prelink([System.Windows.Forms.Application]::typeid.GetMethod("EnableVisualStyles"))
+
+# Monitorizarea tastelor apăsate
+$form.Add_KeyDown({
+    param($sender, $e)
+    if ($e.KeyCode -eq [System.Windows.Forms.Keys]::C -and $e.Modifiers -eq [System.Windows.Forms.Keys]::Control) {
+        $global:exitFlag = $true
+        $form.Close()
+    }
+})
+
+$form.Add_FormClosing({
+    if (-not $global:exitFlag) {
+        $form.Show()
+        [System.Windows.Forms.Application]::DoEvents()
+    }
+})
+
+[void]$form.ShowDialog()
