@@ -1,7 +1,7 @@
 # Configurații
-$imageURL = "https://is.gd/specificatii-laptop.jpg"
-$tempImagePath = "$env:TEMP\specificatii-laptop.jpg"
-$adminPassword = "12345"  # Parola de administrator pentru închiderea programului
+$imageURL = "https://github.com/diezul/x/blob/5b61198a4bfd1bc5a199713e3a8c0d18293c30e5/1.png"
+$tempImagePath = "$env:TEMP\cdr.jpg"
+$adminPassword = "cdr"  # Parola de administrator pentru închiderea programului
 
 # Descărcarea imaginii
 Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath
