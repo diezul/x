@@ -1,5 +1,5 @@
 # Configurare URL pentru imagine
-$imageURL = "https://github.com/diezul/x/blob/5b61198a4bfd1bc5a199713e3a8c0d18293c30e5/1.png"
+$imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\cdr.png"
 
 # Descărcare imagine
