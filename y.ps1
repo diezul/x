@@ -22,7 +22,7 @@ function Show-FullScreenImage {
     $form.FormBorderStyle = 'None'
     $form.TopMost = $true
     $form.BackColor = [System.Drawing.Color]::Black
-    $form.KeyPreview = $true
+    $form.StartPosition = 'CenterScreen'
 
     try {
         $img = [System.Drawing.Image]::FromFile($tempImagePath)
@@ -37,23 +37,25 @@ function Show-FullScreenImage {
     $pictureBox.SizeMode = 'StretchImage'
     $form.Controls.Add($pictureBox)
 
-    # Detectează combinația de taste "cdr"
+    # Variabilă globală pentru secvența de taste
     $global:keySequence = ""
-    $form.KeyDown += {
+
+    # Înregistrarea evenimentului KeyDown
+    $form.Add_KeyDown({
         param($sender, $eventArgs)
-        $global:keySequence += $eventArgs.KeyChar
-        if ($global:keySequence -like "*cdr") {
+        $global:keySequence += $eventArgs.KeyCode
+        if ($global:keySequence -like "*C*D*R") {
             Stop-All
         }
-    }
+    })
 
     # Protejează împotriva închiderii accidentale
-    $form.FormClosing += {
-        param($sender, $e)
+    $form.Add_FormClosing({
+        param($sender, $eventArgs)
         if (-not $global:exitFlag) {
-            $e.Cancel = $true
+            $eventArgs.Cancel = $true
         }
-    }
+    })
 
     [void]$form.ShowDialog()
 }
