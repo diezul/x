@@ -12,53 +12,38 @@ function Download-Image {
     }
 }
 
-# Blocare tasta Windows
+# Blocare taste Windows
 function Block-WindowsKey {
     Add-Type @"
         using System;
-        using System.Diagnostics;
         using System.Runtime.InteropServices;
+        using System.Windows.Forms;
 
-        public class InterceptKeys {
-            private const int WH_KEYBOARD_LL = 13;
-            private const int WM_KEYDOWN = 0x0100;
-            private static IntPtr hookID = IntPtr.Zero;
+        public class HotkeyBlocker {
+            private const int MOD_NOREPEAT = 0x4000;
+            private const int MOD_WIN = 0x8;
+            private const int WM_HOTKEY = 0x312;
 
-            public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+            [DllImport("user32.dll")]
+            public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
-            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-            public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+            [DllImport("user32.dll")]
+            public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
-            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            public static extern bool UnhookWindowsHookEx(IntPtr hhk);
-
-            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-            public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-
-            [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-            public static extern IntPtr GetModuleHandle(string lpModuleName);
-
-            public static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
-                if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
-                    int vkCode = Marshal.ReadInt32(lParam);
-                    if (vkCode == 0x5B || vkCode == 0x5C) { // 0x5B = Left Windows Key, 0x5C = Right Windows Key
-                        return (IntPtr)1; // Blochează tasta
-                    }
-                }
-                return CallNextHookEx(hookID, nCode, wParam, lParam);
+            public static void Block() {
+                // Blocare tasta Windows (stânga și dreapta)
+                RegisterHotKey(IntPtr.Zero, 1, MOD_NOREPEAT | MOD_WIN, 0x5B); // Left Windows Key
+                RegisterHotKey(IntPtr.Zero, 2, MOD_NOREPEAT | MOD_WIN, 0x5C); // Right Windows Key
             }
 
-            public static void SetHook() {
-                hookID = SetWindowsHookEx(WH_KEYBOARD_LL, HookCallback, GetModuleHandle(null), 0);
-            }
-
-            public static void RemoveHook() {
-                UnhookWindowsHookEx(hookID);
+            public static void Unblock() {
+                // Deblocare taste Windows
+                UnregisterHotKey(IntPtr.Zero, 1);
+                UnregisterHotKey(IntPtr.Zero, 2);
             }
         }
 "@
-    [InterceptKeys]::SetHook()
+    [HotkeyBlocker]::Block()
 }
 
 # Afișare imagine pe toate monitoarele
@@ -104,7 +89,7 @@ function Show-FullScreenImage {
 
 # Funcție pentru oprirea completă a aplicației
 function Stop-All {
-    [InterceptKeys]::RemoveHook()
+    [HotkeyBlocker]::Unblock()
     Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
     exit
 }
