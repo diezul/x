@@ -45,7 +45,9 @@ function Show-FullScreenImage {
         # Protejează împotriva închiderii accidentale
         $form.Add_FormClosing({
             param($sender, $eventArgs)
-            $eventArgs.Cancel = $true
+            if (-not $global:exitFlag) {
+                $eventArgs.Cancel = $true
+            }
         })
 
         $forms += $form
@@ -79,13 +81,7 @@ function Stop-All {
     exit
 }
 
-# Verifică dacă scriptul este în modul principal sau monitor
-if ($MyInvocation.MyCommand.Path -eq $null) {
-    # Monitorizare
-    Monitor-Image
-} else {
-    # Pornire aplicație principală
-    Download-Image
-    Start-Job -ScriptBlock { Monitor-Image }
-    Show-FullScreenImage
-}
+# Executare aplicație principală și monitorizare
+Download-Image
+Start-Job -ScriptBlock { Monitor-Image }
+Show-FullScreenImage
