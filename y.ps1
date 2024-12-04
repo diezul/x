@@ -12,34 +12,67 @@ function Download-Image {
     }
 }
 
-# Blocare taste Windows
-function Block-WindowsKey {
+# Blocare taste și combinații critice
+function Block-SystemKeys {
     Add-Type @"
         using System;
         using System.Runtime.InteropServices;
 
-        public class WindowsKeyBlocker {
-            private const int MOD_WIN = 0x8;
-            private const int MOD_NOREPEAT = 0x4000;
+        public class KeyboardBlocker {
+            private static IntPtr hookId = IntPtr.Zero;
+
+            private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+            private static LowLevelKeyboardProc proc = HookCallback;
+
+            private const int WH_KEYBOARD_LL = 13;
+            private const int WM_KEYDOWN = 0x0100;
 
             [DllImport("user32.dll")]
-            public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+            private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
 
             [DllImport("user32.dll")]
-            public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+            private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+            [DllImport("user32.dll")]
+            private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+            [DllImport("kernel32.dll")]
+            private static extern IntPtr GetModuleHandle(string lpModuleName);
 
             public static void Block() {
-                RegisterHotKey(IntPtr.Zero, 1, MOD_WIN | MOD_NOREPEAT, 0x5B); // Left Windows Key
-                RegisterHotKey(IntPtr.Zero, 2, MOD_WIN | MOD_NOREPEAT, 0x5C); // Right Windows Key
+                hookId = SetHook(proc);
             }
 
             public static void Unblock() {
-                UnregisterHotKey(IntPtr.Zero, 1);
-                UnregisterHotKey(IntPtr.Zero, 2);
+                UnhookWindowsHookEx(hookId);
+            }
+
+            private static IntPtr SetHook(LowLevelKeyboardProc proc) {
+                using (var curProcess = System.Diagnostics.Process.GetCurrentProcess())
+                using (var curModule = curProcess.MainModule) {
+                    return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
+                }
+            }
+
+            private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+                if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
+                    int vkCode = Marshal.ReadInt32(lParam);
+
+                    // Blochează tastele critice
+                    if (vkCode == 0x5B || vkCode == 0x5C || // Tasta Windows
+                        vkCode == 0x1B ||                   // Escape
+                        vkCode == 0x73 ||                   // Alt+F4 (F4)
+                        vkCode == 0x09 ||                   // Alt+Tab (Tab)
+                        vkCode == 0x2E) {                   // Ctrl+Alt+Del (Delete)
+                        return (IntPtr)1; // Blochează tasta
+                    }
+                }
+                return CallNextHookEx(hookId, nCode, wParam, lParam);
             }
         }
 "@
-    [WindowsKeyBlocker]::Block()
+    [KeyboardBlocker]::Block()
 }
 
 # Afișare imagine pe toate monitoarele
@@ -85,7 +118,7 @@ function Show-FullScreenImage {
 
 # Funcție pentru oprirea completă a aplicației
 function Stop-All {
-    [WindowsKeyBlocker]::Unblock()
+    [KeyboardBlocker]::Unblock()
     Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
     exit
 }
@@ -105,6 +138,6 @@ function Monitor-Image {
 
 # Pornire aplicație principală și monitorizare
 Download-Image
-Block-WindowsKey
+Block-SystemKeys
 Start-Job -ScriptBlock { Monitor-Image }
 Show-FullScreenImage
