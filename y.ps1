@@ -18,9 +18,9 @@ function Block-WindowsKey {
         using System;
         using System.Runtime.InteropServices;
 
-        public class HotkeyBlocker {
-            private const int MOD_NOREPEAT = 0x4000;
+        public class WindowsKeyBlocker {
             private const int MOD_WIN = 0x8;
+            private const int MOD_NOREPEAT = 0x4000;
 
             [DllImport("user32.dll")]
             public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -29,8 +29,8 @@ function Block-WindowsKey {
             public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
             public static void Block() {
-                RegisterHotKey(IntPtr.Zero, 1, MOD_NOREPEAT | MOD_WIN, 0x5B); // Left Windows Key
-                RegisterHotKey(IntPtr.Zero, 2, MOD_NOREPEAT | MOD_WIN, 0x5C); // Right Windows Key
+                RegisterHotKey(IntPtr.Zero, 1, MOD_WIN | MOD_NOREPEAT, 0x5B); // Left Windows Key
+                RegisterHotKey(IntPtr.Zero, 2, MOD_WIN | MOD_NOREPEAT, 0x5C); // Right Windows Key
             }
 
             public static void Unblock() {
@@ -39,7 +39,7 @@ function Block-WindowsKey {
             }
         }
 "@
-    [HotkeyBlocker]::Block()
+    [WindowsKeyBlocker]::Block()
 }
 
 # Afișare imagine pe toate monitoarele
@@ -85,7 +85,7 @@ function Show-FullScreenImage {
 
 # Funcție pentru oprirea completă a aplicației
 function Stop-All {
-    [HotkeyBlocker]::Unblock()
+    [WindowsKeyBlocker]::Unblock()
     Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
     exit
 }
