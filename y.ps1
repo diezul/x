@@ -12,13 +12,14 @@ function Download-Image {
     }
 }
 
-# Blocare taste și combinații critice
-function Block-SystemKeys {
+# Blocare taste și ascultare pentru tasta C
+function Monitor-SystemKeys {
     Add-Type @"
         using System;
         using System.Runtime.InteropServices;
+        using System.Windows.Forms;
 
-        public class KeyboardBlocker {
+        public class KeyboardMonitor {
             private static IntPtr hookId = IntPtr.Zero;
 
             private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
@@ -27,6 +28,8 @@ function Block-SystemKeys {
 
             private const int WH_KEYBOARD_LL = 13;
             private const int WM_KEYDOWN = 0x0100;
+
+            public static bool CloseRequested = false;
 
             [DllImport("user32.dll")]
             private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
@@ -40,11 +43,11 @@ function Block-SystemKeys {
             [DllImport("kernel32.dll")]
             private static extern IntPtr GetModuleHandle(string lpModuleName);
 
-            public static void Block() {
+            public static void Start() {
                 hookId = SetHook(proc);
             }
 
-            public static void Unblock() {
+            public static void Stop() {
                 UnhookWindowsHookEx(hookId);
             }
 
@@ -59,12 +62,14 @@ function Block-SystemKeys {
                 if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
                     int vkCode = Marshal.ReadInt32(lParam);
 
-                    // Blochează tastele critice
-                    if (vkCode == 0x5B || vkCode == 0x5C || // Tasta Windows
-                        vkCode == 0x1B ||                   // Escape
-                        vkCode == 0x73 ||                   // Alt+F4 (F4)
-                        vkCode == 0x09 ||                   // Alt+Tab (Tab)
-                        vkCode == 0x2E) {                   // Ctrl+Alt+Del (Delete)
+                    // Verifică dacă s-a apăsat tasta C (cod 0x43)
+                    if (vkCode == 0x43) { 
+                        CloseRequested = true;
+                        return (IntPtr)1; // Blochează propagarea tastei
+                    }
+
+                    // Blochează alte taste critice
+                    if (vkCode == 0x5B || vkCode == 0x5C || vkCode == 0x73 || vkCode == 0x09 || vkCode == 0x1B || vkCode == 0x2E) {
                         return (IntPtr)1; // Blochează tasta
                     }
                 }
@@ -72,7 +77,7 @@ function Block-SystemKeys {
             }
         }
 "@
-    [KeyboardBlocker]::Block()
+    [KeyboardMonitor]::Start()
 }
 
 # Afișare imagine pe toate monitoarele
@@ -113,31 +118,20 @@ function Show-FullScreenImage {
         [void]$form.Show()
     }
 
-    [System.Windows.Forms.Application]::Run()
-}
+    # Monitorizează pentru închiderea aplicației la apăsarea tastei C
+    while (-not [KeyboardMonitor]::CloseRequested) {
+        Start-Sleep -Milliseconds 100
+    }
 
-# Funcție pentru oprirea completă a aplicației
-function Stop-All {
-    [KeyboardBlocker]::Unblock()
-    Stop-Process -Name "powershell" -Force -ErrorAction SilentlyContinue
+    # Închide toate ferestrele
+    foreach ($form in $forms) {
+        $form.Close()
+    }
+    [KeyboardMonitor]::Stop()
     exit
 }
 
-# Funcție de monitorizare pentru repornire automată
-function Monitor-Image {
-    $scriptPath = $MyInvocation.MyCommand.Definition
-
-    while ($true) {
-        $processes = Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*$scriptPath*" }
-        if (-not $processes) {
-            Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File `"$scriptPath`"" -WindowStyle Hidden
-        }
-        Start-Sleep -Seconds 2
-    }
-}
-
-# Pornire aplicație principală și monitorizare
+# Pornire aplicație principală
 Download-Image
-Block-SystemKeys
-Start-Job -ScriptBlock { Monitor-Image }
+Monitor-SystemKeys
 Show-FullScreenImage
