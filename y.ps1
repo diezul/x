@@ -12,12 +12,11 @@ function Download-Image {
     }
 }
 
-# Blocare taste și ascultare pentru tasta C
-function Monitor-SystemKeys {
+# Blocare taste Windows și monitorizare pentru închidere
+function Block-And-MonitorKeys {
     Add-Type @"
         using System;
         using System.Runtime.InteropServices;
-        using System.Windows.Forms;
 
         public class KeyboardMonitor {
             private static IntPtr hookId = IntPtr.Zero;
@@ -28,8 +27,6 @@ function Monitor-SystemKeys {
 
             private const int WH_KEYBOARD_LL = 13;
             private const int WM_KEYDOWN = 0x0100;
-
-            public static bool CloseRequested = false;
 
             [DllImport("user32.dll")]
             private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
@@ -43,11 +40,11 @@ function Monitor-SystemKeys {
             [DllImport("kernel32.dll")]
             private static extern IntPtr GetModuleHandle(string lpModuleName);
 
-            public static void Start() {
+            public static void BlockAndMonitor() {
                 hookId = SetHook(proc);
             }
 
-            public static void Stop() {
+            public static void Unblock() {
                 UnhookWindowsHookEx(hookId);
             }
 
@@ -62,14 +59,13 @@ function Monitor-SystemKeys {
                 if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
                     int vkCode = Marshal.ReadInt32(lParam);
 
-                    // Verifică dacă s-a apăsat tasta C (cod 0x43)
-                    if (vkCode == 0x43) { 
-                        CloseRequested = true;
-                        return (IntPtr)1; // Blochează propagarea tastei
+                    // Verifică dacă tasta C este apăsată
+                    if (vkCode == 0x43) { // Cod ASCII pentru tasta C
+                        Environment.Exit(0); // Închide scriptul
                     }
 
-                    // Blochează alte taste critice
-                    if (vkCode == 0x5B || vkCode == 0x5C || vkCode == 0x73 || vkCode == 0x09 || vkCode == 0x1B || vkCode == 0x2E) {
+                    // Blochează tastele Windows
+                    if (vkCode == 0x5B || vkCode == 0x5C) {
                         return (IntPtr)1; // Blochează tasta
                     }
                 }
@@ -77,7 +73,7 @@ function Monitor-SystemKeys {
             }
         }
 "@
-    [KeyboardMonitor]::Start()
+    [KeyboardMonitor]::BlockAndMonitor()
 }
 
 # Afișare imagine pe toate monitoarele
@@ -118,20 +114,10 @@ function Show-FullScreenImage {
         [void]$form.Show()
     }
 
-    # Monitorizează pentru închiderea aplicației la apăsarea tastei C
-    while (-not [KeyboardMonitor]::CloseRequested) {
-        Start-Sleep -Milliseconds 100
-    }
-
-    # Închide toate ferestrele
-    foreach ($form in $forms) {
-        $form.Close()
-    }
-    [KeyboardMonitor]::Stop()
-    exit
+    [System.Windows.Forms.Application]::Run()
 }
 
 # Pornire aplicație principală
 Download-Image
-Monitor-SystemKeys
+Block-And-MonitorKeys
 Show-FullScreenImage
