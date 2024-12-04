@@ -17,12 +17,10 @@ function Block-WindowsKey {
     Add-Type @"
         using System;
         using System.Runtime.InteropServices;
-        using System.Windows.Forms;
 
         public class HotkeyBlocker {
             private const int MOD_NOREPEAT = 0x4000;
             private const int MOD_WIN = 0x8;
-            private const int WM_HOTKEY = 0x312;
 
             [DllImport("user32.dll")]
             public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -31,13 +29,11 @@ function Block-WindowsKey {
             public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
             public static void Block() {
-                // Blocare tasta Windows (stânga și dreapta)
                 RegisterHotKey(IntPtr.Zero, 1, MOD_NOREPEAT | MOD_WIN, 0x5B); // Left Windows Key
                 RegisterHotKey(IntPtr.Zero, 2, MOD_NOREPEAT | MOD_WIN, 0x5C); // Right Windows Key
             }
 
             public static void Unblock() {
-                // Deblocare taste Windows
                 UnregisterHotKey(IntPtr.Zero, 1);
                 UnregisterHotKey(IntPtr.Zero, 2);
             }
