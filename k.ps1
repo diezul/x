@@ -1,6 +1,7 @@
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
-# Cod C# pt blocare input
+# Cod C# pentru blocare input
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -10,7 +11,7 @@ public class InputBlocker {
 }
 "@
 
-# Cod pt ascuns taskbar
+# Cod C# pentru taskbar
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -22,69 +23,82 @@ public class TaskbarHider {
 }
 "@
 
-# Ascunde Taskbar
+# Ascunde taskbar-ul
 $taskbar = [TaskbarHider]::FindWindow("Shell_TrayWnd", "")
 [TaskbarHider]::ShowWindow($taskbar, 0)
 
-# Descarcă poza dacă nu există
+# Descarcă poza
 $tempImage = "$env:TEMP\poza_laptop.jpg"
 if (-not (Test-Path $tempImage)) {
     Invoke-WebRequest -Uri "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $tempImage
 }
 
-# Blochează mouse și tastatură
+# Blochează input
 [InputBlocker]::BlockInput($true)
 
-# Listă de ferestre pentru fiecare ecran
-$forms = @()
+# Variabilă globală partajată
+$global:forme = @()
+$global:inchidereCeruta = $false
 
-# Funcție pentru închidere completă
-function InchideTot {
-    [InputBlocker]::BlockInput($false)
-    [TaskbarHider]::ShowWindow($taskbar, 1)
-    foreach ($f in $forms) {
-        $f.Invoke([Action]{ $f.Close() })
-    }
-    Stop-Process -Id $PID
-}
-
-# Creează câte o fereastră pe fiecare monitor
-[System.Windows.Forms.Screen]::AllScreens | ForEach-Object {
-    $screen = $_
+# Funcție care afișează fereastra pe un anumit ecran
+function Start-DisplayWindow {
+    param ($screen)
 
     $form = New-Object Windows.Forms.Form
     $form.StartPosition = 'Manual'
     $form.Bounds = $screen.Bounds
     $form.FormBorderStyle = 'None'
     $form.TopMost = $true
+    $form.ShowInTaskbar = $false
     $form.BackColor = 'Black'
     $form.KeyPreview = $true
-    $form.ShowInTaskbar = $false
     $form.Cursor = [System.Windows.Forms.Cursors]::None
 
+    $image = [System.Drawing.Image]::FromFile($tempImage)
     $pictureBox = New-Object Windows.Forms.PictureBox
-    $pictureBox.ImageLocation = $tempImage
+    $pictureBox.Image = $image
     $pictureBox.SizeMode = 'Zoom'
     $pictureBox.Dock = 'Fill'
     $form.Controls.Add($pictureBox)
 
-    # Dacă se apasă C — închide tot
+    # La apăsarea tastei C
     $form.Add_KeyDown({
         if ($_.KeyCode -eq 'C') {
-            InchideTot
+            $global:inchidereCeruta = $true
+            foreach ($f in $global:forme) {
+                try { $f.Invoke([Action]{ $f.Close() }) } catch {}
+            }
         }
     })
 
-    # Blochează Alt+F4
+    # Previne Alt+F4
     $form.Add_FormClosing({
-        if ($_.CloseReason -eq "UserClosing") {
+        if (-not $global:inchidereCeruta) {
             $_.Cancel = $true
         }
     })
 
-    $null = $form.Show()
-    $forms += $form
+    $global:forme += $form
+
+    [System.Windows.Forms.Application]::Run($form)
 }
 
-# Pornește loop-ul pe prima fereastră
-[System.Windows.Forms.Application]::Run($forms[0])
+# Creează câte un thread pentru fiecare monitor
+$threads = @()
+foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
+    $thread = [System.Threading.Thread]::New([Threading.ThreadStart]{
+        Start-DisplayWindow -screen $using:screen
+    })
+    $thread.SetApartmentState("STA")
+    $threads += $thread
+    $thread.Start()
+}
+
+# Așteaptă ca toate ferestrele să se închidă
+while (-not $global:inchidereCeruta) {
+    Start-Sleep -Milliseconds 200
+}
+
+# Când ieșim, deblocăm input și restaurăm taskbar
+[InputBlocker]::BlockInput($false)
+[TaskbarHider]::ShowWindow($taskbar, 1)
