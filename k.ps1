@@ -1,5 +1,4 @@
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName PresentationFramework
 
 Add-Type @"
 using System;
@@ -10,31 +9,32 @@ public class InputBlocker {
 }
 "@
 
-# Salvează poza local
+# Descarcă poza dacă nu există deja
 $tempImage = "$env:TEMP\poza_laptop.jpg"
-Invoke-WebRequest -Uri "https://github.com/diezul/x/blob/main/1.jpg?raw=true" -OutFile $tempImage
+if (-not (Test-Path $tempImage)) {
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $tempImage
+}
 
-# Blochează input-ul
+# Blochează mouse și tastatură
 [InputBlocker]::BlockInput($true)
 
-# Creează formularul
+# Creează fereastra
 $form = New-Object Windows.Forms.Form
 $form.WindowState = 'Maximized'
 $form.FormBorderStyle = 'None'
 $form.TopMost = $true
 $form.BackColor = 'Black'
-$form.StartPosition = 'CenterScreen'
 $form.KeyPreview = $true
 $form.Cursor = [System.Windows.Forms.Cursors]::None
 
-# Încarcă imaginea
+# Imaginea
 $pictureBox = New-Object Windows.Forms.PictureBox
 $pictureBox.ImageLocation = $tempImage
 $pictureBox.SizeMode = 'Zoom'
 $pictureBox.Dock = 'Fill'
 $form.Controls.Add($pictureBox)
 
-# Eveniment apăsare tastă
+# Deblochează doar la apăsarea tastei C
 $form.Add_KeyDown({
     if ($_.KeyCode -eq 'C') {
         [InputBlocker]::BlockInput($false)
@@ -42,5 +42,5 @@ $form.Add_KeyDown({
     }
 })
 
-# Rulează formularul (poza full screen)
-[void]$form.ShowDialog()
+# Arată fereastra
+$form.ShowDialog()
