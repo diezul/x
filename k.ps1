@@ -1,4 +1,6 @@
-Add-Type -AssemblyName PresentationFramework, System.Windows.Forms
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName PresentationFramework
+
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -8,56 +10,37 @@ public class InputBlocker {
 }
 "@
 
-# Funcție pentru descărcarea și salvarea pozei temporar
-$tempImagePath = "$env:TEMP\componenta_laptop.jpg"
-Invoke-WebRequest -Uri "https://github.com/diezul/x/blob/main/1.jpg?raw=true" -OutFile $tempImagePath
+# Salvează poza local
+$tempImage = "$env:TEMP\poza_laptop.jpg"
+Invoke-WebRequest -Uri "https://github.com/diezul/x/blob/main/1.jpg?raw=true" -OutFile $tempImage
 
 # Blochează input-ul
 [InputBlocker]::BlockInput($true)
 
-# Creați fereastra WPF
-[xml]$xaml = @"
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        WindowStyle="None" 
-        ResizeMode="NoResize"
-        WindowState="Maximized"
-        Topmost="True"
-        Background="Black"
-        KeyDown="Window_KeyDown"
-        ShowInTaskbar="False"
-        Cursor="None">
-    <Grid>
-        <Image Source="$tempImagePath" Stretch="Uniform"/>
-    </Grid>
-</Window>
-"@
+# Creează formularul
+$form = New-Object Windows.Forms.Form
+$form.WindowState = 'Maximized'
+$form.FormBorderStyle = 'None'
+$form.TopMost = $true
+$form.BackColor = 'Black'
+$form.StartPosition = 'CenterScreen'
+$form.KeyPreview = $true
+$form.Cursor = [System.Windows.Forms.Cursors]::None
 
-# Funcție care închide fereastra dacă se apasă C
-$code = @"
-using System.Windows;
-using System.Windows.Input;
+# Încarcă imaginea
+$pictureBox = New-Object Windows.Forms.PictureBox
+$pictureBox.ImageLocation = $tempImage
+$pictureBox.SizeMode = 'Zoom'
+$pictureBox.Dock = 'Fill'
+$form.Controls.Add($pictureBox)
 
-public partial class Window : Window {
-    public Window() {
-        InitializeComponent();
+# Eveniment apăsare tastă
+$form.Add_KeyDown({
+    if ($_.KeyCode -eq 'C') {
+        [InputBlocker]::BlockInput($false)
+        $form.Close()
     }
-    private void Window_KeyDown(object sender, KeyEventArgs e) {
-        if (e.Key == Key.C) {
-            this.Close();
-        }
-    }
-}
-"@
-
-Add-Type -ReferencedAssemblies PresentationFramework -TypeDefinition $code -Language CSharp
-
-# Încarcă fereastra și o afișează
-$reader = New-Object System.Xml.XmlNodeReader $xaml
-$window = [Windows.Markup.XamlReader]::Load($reader)
-
-# Când se închide fereastra, deblochează input-ul
-$window.Add_Closed({
-    [InputBlocker]::BlockInput($false)
 })
 
-$window.ShowDialog()
+# Rulează formularul (poza full screen)
+[void]$form.ShowDialog()
