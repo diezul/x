@@ -35,7 +35,7 @@ function Download-Image {
     }
 }
 
-# Blocare taste Windows și închidere la C
+# Blocare taste: Windows, Alt + închidere la C
 function Block-And-MonitorKeys {
     Add-Type @"
         using System;
@@ -82,13 +82,18 @@ function Block-And-MonitorKeys {
                 if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
                     int vkCode = Marshal.ReadInt32(lParam);
 
-                    // Tasta C = închide
+                    // Tasta C => Închide aplicația
                     if (vkCode == 0x43) {
                         Environment.Exit(0);
                     }
 
-                    // Tasta Windows stânga/dreapta
+                    // Windows (stg/dreapta) => blocare
                     if (vkCode == 0x5B || vkCode == 0x5C) {
+                        return (IntPtr)1;
+                    }
+
+                    // Alt (stânga/dreapta)
+                    if (vkCode == 0x12) {
                         return (IntPtr)1;
                     }
                 }
