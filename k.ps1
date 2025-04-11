@@ -1,97 +1,23 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Cod nativ pt blocare și taskbar
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class Native {
-    [DllImport("user32.dll")]
-    public static extern bool BlockInput(bool fBlockIt);
-    [DllImport("user32.dll")]
-    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-}
-"@
-
-# ▶️ INFO TELEGRAM
-$pc = $env:COMPUTERNAME
-$user = $env:USERNAME
-
-# Ia IP-ul local (ignora 127.x sau fe80:)
-$ip = (Get-NetIPAddress -AddressFamily IPv4 `
-    | Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
-
-$message = "PC-ul $pc + $user din amanet este protejat.`nAcesta este IP-ul PC-ului: $ip"
-
-# Trimite în Telegram
-$uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
-$body = @{
-    'chat_id' = '656189986'
-    'text'    = $message
-} | ConvertTo-Json -Compress
-
-try {
-    Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json'
-} catch {}
-
-# ▶️ Ascunde Taskbar și blochează input
-$taskbar = [Native]::FindWindow("Shell_TrayWnd", "")
-[Native]::ShowWindow($taskbar, 0)
-[Native]::BlockInput($true)
-
-# ▶️ Descarcă imaginea
-$temp = "$env:TEMP\poza_laptop.jpg"
+$temp = "$env:TEMP\poza.jpg"
 Invoke-WebRequest "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
 
-# ▶️ Calculează rezoluția tuturor monitoarelor
-$bounds = [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { $_.Bounds }
-$minX = ($bounds | ForEach-Object { $_.X }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
-$minY = ($bounds | ForEach-Object { $_.Y }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
-$maxRight = ($bounds | ForEach-Object { $_.Right }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
-$maxBottom = ($bounds | ForEach-Object { $_.Bottom }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
-$width = $maxRight - $minX
-$height = $maxBottom - $minY
-
-# ▶️ Variabilă de control
-$script:inchis = $false
-
-# ▶️ Creează fereastra mare
 $form = New-Object Windows.Forms.Form
-$form.StartPosition = 'Manual'
-$form.Location = New-Object Drawing.Point $minX, $minY
-$form.Size = New-Object Drawing.Size $width, $height
+$form.WindowState = 'Maximized'
 $form.FormBorderStyle = 'None'
 $form.TopMost = $true
-$form.ShowInTaskbar = $false
-$form.BackColor = 'Black'
 $form.KeyPreview = $true
-$form.Cursor = [System.Windows.Forms.Cursors]::None
 
-$img = [System.Drawing.Image]::FromFile($temp)
 $pb = New-Object Windows.Forms.PictureBox
-$pb.Image = $img
 $pb.Dock = 'Fill'
 $pb.SizeMode = 'Zoom'
+$pb.Image = [System.Drawing.Image]::FromFile($temp)
 $form.Controls.Add($pb)
 
-# ▶️ Închide la C
 $form.Add_KeyDown({
-    if ($_.KeyCode -eq 'C') {
-        $script:inchis = $true
-        $form.Close()
-    }
+    if ($_.KeyCode -eq 'C') { $form.Close() }
 })
 
-$form.Add_FormClosing({
-    if (-not $script:inchis) { $_.Cancel = $true }
-})
-
-# ▶️ Rulează aplicația
-$form.Show()
-[System.Windows.Forms.Application]::Run($form)
-
-# ▶️ Deblochează după închidere
-[Native]::BlockInput($false)
-[Native]::ShowWindow($taskbar, 1)
+$form.ShowDialog()
