@@ -95,4 +95,26 @@ public class KeyboardMonitor {
         if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
             int vkCode = Marshal.ReadInt32(lParam);
             if (vkCode == 0x43) Environment.Exit(0); // C închide
-            if (vkCode == 0x5B || vkCode == 0x5C) return (IntPtr
+            if (vkCode == 0x5B || vkCode == 0x5C) return (IntPtr)1; // blochează Windows
+        }
+        return CallNextHookEx(hookId, nCode, wParam, lParam);
+    }
+}
+"@
+[KeyboardMonitor]::Start()
+
+# Imagine fullscreen pe toate monitoarele
+Add-Type -Assembly System.Windows.Forms,System.Drawing
+$screens = [System.Windows.Forms.Screen]::AllScreens
+foreach($screen in $screens) {
+    $form = New-Object System.Windows.Forms.Form -Property @{
+        WindowState='Maximized'; FormBorderStyle='None'; TopMost=$true; StartPosition='Manual'; Location=$screen.Bounds.Location; Size=$screen.Bounds.Size; BackColor='Black'; Cursor=[System.Windows.Forms.Cursors]::None
+    }
+    $pb = New-Object Windows.Forms.PictureBox -Property @{
+        Dock='Fill'; Image=[Drawing.Image]::FromFile($tempImagePath); SizeMode='StretchImage'
+    }
+    $form.Controls.Add($pb)
+    $form.Show()
+}
+
+[System.Windows.Forms.Application]::Run()
