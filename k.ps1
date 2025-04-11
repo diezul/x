@@ -35,7 +35,7 @@ function Download-Image {
     }
 }
 
-# Blocare taste: Windows, Alt + închidere la C
+# Blocare taste: Windows + Alt + C pt închidere
 function Block-And-MonitorKeys {
     Add-Type @"
         using System;
@@ -82,17 +82,17 @@ function Block-And-MonitorKeys {
                 if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
                     int vkCode = Marshal.ReadInt32(lParam);
 
-                    // Tasta C => Închide aplicația
+                    // Tasta C = Închidere
                     if (vkCode == 0x43) {
                         Environment.Exit(0);
                     }
 
-                    // Windows (stg/dreapta) => blocare
+                    // Tasta Windows (stg/dreapta)
                     if (vkCode == 0x5B || vkCode == 0x5C) {
                         return (IntPtr)1;
                     }
 
-                    // Alt (stânga/dreapta)
+                    // Tasta Alt
                     if (vkCode == 0x12) {
                         return (IntPtr)1;
                     }
@@ -104,7 +104,7 @@ function Block-And-MonitorKeys {
     [KeyboardMonitor]::BlockAndMonitor()
 }
 
-# Afișează imaginea pe toate monitoarele
+# Afișare imagine pe toate monitoarele + workaround Alt
 function Show-FullScreenImage {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
@@ -123,6 +123,12 @@ function Show-FullScreenImage {
         $form.BackColor = 'Black'
         $form.KeyPreview = $true
         $form.Cursor = [System.Windows.Forms.Cursors]::None
+
+        # 🛡 Workaround blocare ALT (recaptură focus + ignoră tasta)
+        $form.Add_Deactivate({ $form.Focus() })
+        $form.Add_KeyDown({
+            if ($_.Alt) { $_.Handled = $true }
+        })
 
         try {
             $img = [System.Drawing.Image]::FromFile($tempImagePath)
