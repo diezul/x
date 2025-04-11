@@ -1,95 +1,129 @@
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
+# Setări inițiale
+$imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
+$tempImagePath = "$env:TEMP\image.jpg"
 
-# Cod nativ pentru input și taskbar
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class Native {
-    [DllImport("user32.dll")]
-    public static extern bool BlockInput(bool fBlockIt);
-    [DllImport("user32.dll")]
-    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-    [DllImport("user32.dll")]
-    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+# Descărcare imagine
+function Download-Image {
+    try {
+        Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
+    } catch {
+        Write-Host "Eroare la descărcarea imaginii." -ForegroundColor Red
+        exit
+    }
 }
+
+# Blochează tastele Windows + Alt și ascultă tasta C
+function Block-And-MonitorKeys {
+    Add-Type @"
+    using System;
+    using System.Diagnostics;
+    using System.Runtime.InteropServices;
+    using System.Windows.Forms;
+    public class KeyboardMonitor {
+        private static IntPtr hookId = IntPtr.Zero;
+        private static LowLevelKeyboardProc proc = HookCallback;
+        private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+        private const int WH_KEYBOARD_LL = 13;
+        private const int WM_KEYDOWN = 0x0100;
+        private const int WM_SYSKEYDOWN = 0x0104;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+        [DllImport("user32.dll")]
+        private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+        [DllImport("user32.dll")]
+        private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        public static void StartHook() {
+            hookId = SetHook(proc);
+        }
+
+        public static void StopHook() {
+            UnhookWindowsHookEx(hookId);
+        }
+
+        private static IntPtr SetHook(LowLevelKeyboardProc proc) {
+            using (Process curProcess = Process.GetCurrentProcess())
+            using (ProcessModule curModule = curProcess.MainModule) {
+                return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
+            }
+        }
+
+        public static event EventHandler CPressed;
+
+        private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+            if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
+                int vkCode = Marshal.ReadInt32(lParam);
+
+                // Tasta C
+                if (vkCode == 0x43) {
+                    if (CPressed != null) CPressed(null, EventArgs.Empty);
+                }
+
+                // Blochează tastele Windows și Alt
+                if (vkCode == 0x5B || vkCode == 0x5C || vkCode == 0xA4 || vkCode == 0xA5) {
+                    return (IntPtr)1;
+                }
+            }
+            return CallNextHookEx(hookId, nCode, wParam, lParam);
+        }
+    }
 "@
 
-# ▶️ TRIMITE MESAJ PE TELEGRAM
-$pcName = $env:COMPUTERNAME
-$message = "PC-ul $pcName din amanet este protejat."
+    # Abonare la evenimentul tasta C
+    [KeyboardMonitor]::CPressed.Add({
+        [KeyboardMonitor]::StopHook()
+        [System.Windows.Forms.Application]::Exit()
+    })
 
-$uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
-$body = @{
-    'chat_id' = '656189986'
-    'text'    = $message
-} | ConvertTo-Json -Compress
-
-try {
-    Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json'
-} catch {
-    # Nu afișăm eroarea, doar continuăm
+    [KeyboardMonitor]::StartHook()
 }
 
-# ▶️ ASCUNDE TASKBAR
-$taskbar = [Native]::FindWindow("Shell_TrayWnd", "")
-[Native]::ShowWindow($taskbar, 0)
+# Afișează imaginea pe toate monitoarele
+function Show-FullScreenImage {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
 
-# ▶️ BLOCHEAZĂ INPUT
-[Native]::BlockInput($true)
+    $screens = [System.Windows.Forms.Screen]::AllScreens
+    $forms = @()
 
-# ▶️ DESCARCĂ POZA
-$temp = "$env:TEMP\poza_laptop.jpg"
-Invoke-WebRequest "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
+    foreach ($screen in $screens) {
+        $form = New-Object System.Windows.Forms.Form
+        $form.WindowState = 'Maximized'
+        $form.FormBorderStyle = 'None'
+        $form.TopMost = $true
+        $form.StartPosition = 'Manual'
+        $form.Location = $screen.Bounds.Location
+        $form.Size = $screen.Bounds.Size
+        $form.KeyPreview = $true
 
-# ▶️ CALCULEAZĂ DIMENSIUNE TOTALĂ A MONITOARELOR
-$bounds = [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { $_.Bounds }
-$minX = ($bounds | ForEach-Object { $_.X }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
-$minY = ($bounds | ForEach-Object { $_.Y }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
-$maxRight = ($bounds | ForEach-Object { $_.Right }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
-$maxBottom = ($bounds | ForEach-Object { $_.Bottom }) | Measure-Object -Maximum | Select-Object -ExpandProperty Maximum
-$width = $maxRight - $minX
-$height = $maxBottom - $minY
+        try {
+            $img = [System.Drawing.Image]::FromFile($tempImagePath)
+        } catch {
+            Write-Host "Eroare la încărcarea imaginii." -ForegroundColor Red
+            exit
+        }
 
-# ▶️ VARIABILĂ DE CONTROL
-$script:inchis = $false
+        $pictureBox = New-Object System.Windows.Forms.PictureBox
+        $pictureBox.Image = $img
+        $pictureBox.Dock = 'Fill'
+        $pictureBox.SizeMode = 'StretchImage'
+        $form.Controls.Add($pictureBox)
 
-# ▶️ CREARE FEREASTRĂ URIAȘĂ PESTE TOATE MONITOARELE
-$form = New-Object Windows.Forms.Form
-$form.StartPosition = 'Manual'
-$form.Location = New-Object Drawing.Point $minX, $minY
-$form.Size = New-Object Drawing.Size $width, $height
-$form.FormBorderStyle = 'None'
-$form.TopMost = $true
-$form.ShowInTaskbar = $false
-$form.BackColor = 'Black'
-$form.KeyPreview = $true
-$form.Cursor = [System.Windows.Forms.Cursors]::None
-
-$img = [System.Drawing.Image]::FromFile($temp)
-$pb = New-Object Windows.Forms.PictureBox
-$pb.Image = $img
-$pb.Dock = 'Fill'
-$pb.SizeMode = 'Zoom'
-$form.Controls.Add($pb)
-
-# ▶️ IEȘIRE LA C
-$form.Add_KeyDown({
-    if ($_.KeyCode -eq 'C') {
-        $script:inchis = $true
-        $form.Close()
+        $forms += $form
     }
-})
 
-# ▶️ PREVINE ÎNCHIDEREA MANUALĂ
-$form.Add_FormClosing({
-    if (-not $script:inchis) { $_.Cancel = $true }
-})
+    foreach ($form in $forms) {
+        [void]$form.Show()
+    }
 
-# ▶️ ARATĂ ȘI RULEAZĂ
-$form.Show()
-[System.Windows.Forms.Application]::Run($form)
+    [System.Windows.Forms.Application]::Run()
+}
 
-# ▶️ DEBLOCHEAZĂ INPUT LA IEȘIRE
-[Native]::BlockInput($false)
-[Native]::ShowWindow($taskbar, 1)
+# Rulează aplicația
+Download-Image
+Block-And-MonitorKeys
+Show-FullScreenImage
