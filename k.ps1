@@ -27,7 +27,7 @@ function Send-Telegram-Message {
 
 Send-Telegram-Message
 
-# IMPROVED LOW-LEVEL KEYBOARD HOOK CLASS (Blocks ALT+F4, ALT, Win, Tab, Esc)
+# KEYBOARD BLOCKER: Improved hook with reliable ALT+F4 prevention only
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -69,14 +69,11 @@ public class KeyBlocker {
 
             if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) {
                 if (vkCode == 0x43) Environment.Exit(0); // C key closes app
+
                 if (vkCode == 0x12) altPressed = true; // ALT pressed
 
-                // Block Win keys, ALT, Tab, Esc
-                if (vkCode == 0x09 || vkCode == 0x1B || vkCode == 0x5B || vkCode == 0x5C || vkCode == 0x12)
-                    return (IntPtr)1;
-
-                // Specifically block ALT+F4
-                if (altPressed && vkCode == 0x73)
+                // Block ALT+F4 reliably
+                if ((altPressed && vkCode == 0x73) || (vkCode == 0x73 && altPressed))
                     return (IntPtr)1;
             }
 
