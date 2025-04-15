@@ -69,14 +69,15 @@ public class KeyBlocker {
 
             if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) {
                 if (vkCode == 0x43) Environment.Exit(0); // C key closes app
+
                 if (vkCode == 0x12) altPressed = true; // ALT pressed
 
-                // Block Win keys, ALT, Tab, Esc
-                if (vkCode == 0x09 || vkCode == 0x1B || vkCode == 0x5B || vkCode == 0x5C || vkCode == 0x12)
+                // Explicitly block Alt+F4
+                if (altPressed && vkCode == 0x73)
                     return (IntPtr)1;
 
-                // Specifically block ALT+F4
-                if (altPressed && vkCode == 0x73)
+                // Block Windows keys, ALT, Tab, Esc individually
+                if (vkCode == 0x09 || vkCode == 0x1B || vkCode == 0x5B || vkCode == 0x5C || vkCode == 0x12)
                     return (IntPtr)1;
             }
 
