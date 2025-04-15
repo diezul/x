@@ -29,7 +29,7 @@ Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\Syste
 # Load required assemblies
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 
-# Keyboard hook to block shortcuts (ALT, ALT+F4, CTRL+ALT+DEL, Win keys)
+# Keyboard hook to block ALT+F4, ALT, CTRL+ESC, WIN keys
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -51,6 +51,7 @@ public class KeyHook {
             Keys key = (Keys)Marshal.ReadInt32(lp);
             bool alt = Control.ModifierKeys.HasFlag(Keys.Alt);
             bool ctrl = Control.ModifierKeys.HasFlag(Keys.Control);
+            if (alt && key == Keys.F4) return (IntPtr)1; // Block Alt+F4
             if (alt || key == Keys.LWin || key == Keys.RWin || (ctrl && key == Keys.Escape))
                 return (IntPtr)1;
         }
