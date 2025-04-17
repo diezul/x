@@ -50,7 +50,7 @@ public static void Block(){ if(h==IntPtr.Zero) h=SetWindowsHookEx(WH,d,GetModule
 static IntPtr Hook(int n,IntPtr w,IntPtr l){ if(n>=0&&(w==(IntPtr)WM1||w==(IntPtr)WM2)){ int vk=System.Runtime.InteropServices.Marshal.ReadInt32(l); if(vk==0x43) return CallNextHookEx(h,n,w,l); return (IntPtr)1;} return CallNextHookEx(h,n,w,l);} }
 '@
 
-  $forms = $null $null
+  $forms = $null
   function Show-Lock {
     if($forms){ return }
     [KeyBlocker]::Block()
