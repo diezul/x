@@ -1,28 +1,47 @@
-# ==========================
-# PawnshopLock  –  Installer
-# ==========================
+# ===============================
+# PawnshopLock – Smart Installer
+# ===============================
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# --- CONFIGURE ----------------------------------------------------------
-$repoRaw  = 'https://raw.githubusercontent.com/diezul/x/main'   # your repo root
-$mainFile = 'pawnlock.ps1'                                      # main script name
-$localDir = "$env:ProgramData\PawnshopLock"                     # safe local storage
-$taskName = 'PawnshopLockService'                               # scheduled‑task name
-# -----------------------------------------------------------------------
+# ---- CONFIG -----------------------------------------------------------
+$repoRaw  = 'https://raw.githubusercontent.com/diezul/x/main' # GitHub RAW root
+$mainFile = 'pawnlock.ps1'                                   # main service script
+$localDir = "$env:ProgramData\PawnshopLock"                  # local safe folder
+$taskName = 'PawnshopLockService'                            # scheduled task name
+# ----------------------------------------------------------------------
 
-# Ensure local folder exists + latest script downloaded
+# ---- helper: are we admin? -------------------------------------------
+$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+$IsAdmin   = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+# ---- 1. grab latest service script -----------------------------------
 New-Item -ItemType Directory -Path $localDir -Force | Out-Null
 Invoke-WebRequest "$repoRaw/$mainFile" -OutFile "$localDir\$mainFile" -UseBasicParsing
 
-# Build scheduled–task action (hidden, bypass policy)
+# ---- 2. build task action --------------------------------------------
 $action  = New-ScheduledTaskAction `
            -Execute 'powershell.exe' `
            -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$localDir\$mainFile`""
 
-# Trigger at **every log‑on** (you can switch to –AtStartup and RunAs SYSTEM if preferred)
+# trigger: run on every user log‑on (works for normal & admin accounts)
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 
-# Register or replace the task – run with highest privileges so a normal user can’t kill it
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -RunLevel Highest -Force
+# ---- 3. register task -------------------------------------------------
+try {
+    if ($IsAdmin) {
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
+                               -RunLevel Highest -Force | Out-Null
+    } else {
+        # no admin: register under current user (no RunLevel switch)
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Force | Out-Null
+    }
+}
+catch {
+    Write-Warning "Could not register scheduled task: $_"
+    Write-Host "Try running this installer from an **Administrator** PowerShell." -ForegroundColor Yellow
+    exit
+}
 
-# Launch immediately for this session
-Start-Process powershell -WindowStyle Hidden -ArgumentList "-ExecutionPolicy Bypass -File `"$localDir\$mainFile`""
+# ---- 4. launch immediately in background -----------------------------
+Start-Process powershell -WindowStyle Hidden `
+    -ArgumentList "-ExecutionPolicy Bypass -File `"$localDir\$mainFile`""
